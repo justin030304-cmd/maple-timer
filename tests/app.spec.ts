@@ -106,8 +106,8 @@ async function seedExperience(page: Page, expIdleSec = 5) {
 }
 
 /** A generated green EXP bar is an integration fixture, not a game screenshot. */
-async function drawExperience(page: Page, text: string, animateBar = false) {
-  await page.evaluate(({ text, animate }) => {
+async function drawExperience(page: Page, text: string, animateBar = false, dimBorders = false) {
+  await page.evaluate(({ text, animate, dimBorders }) => {
     if (window.__experienceAnimation !== undefined) clearInterval(window.__experienceAnimation)
     const capture = window.__capture!
     const context = capture.canvas.getContext('2d')!
@@ -119,6 +119,11 @@ async function drawExperience(page: Page, text: string, animateBar = false) {
       context.fillRect(128, 72, 512, 144)
       context.fillStyle = phase % 2 ? '#77ad43' : '#638f3b'
       context.fillRect(128, 72, 512 * ((phase % 5) + 1) / 5, 144)
+      if (dimBorders) {
+        context.fillStyle = '#646464'
+        context.fillRect(128, 120, 512, 2)
+        context.fillRect(128, 166, 512, 2)
+      }
       context.fillStyle = '#fffefb'
       context.font = '22px monospace'
       context.textAlign = 'left'
@@ -129,7 +134,7 @@ async function drawExperience(page: Page, text: string, animateBar = false) {
     }
     draw()
     if (animate) window.__experienceAnimation = window.setInterval(draw, 220)
-  }, { text, animate: animateBar })
+  }, { text, animate: animateBar, dimBorders })
 }
 
 const experienceMessage = '경험치 숫자가 5초 동안 변하지 않았습니다.'
@@ -697,4 +702,17 @@ test('fatal OCR worker failure stays actionable after ROI edits and a new reader
   await expect(exp.getByTestId('experience-value')).toHaveText('586,571,406,212,585', { timeout: 25_000 })
   await expect(exp.locator('.tiny-status')).toContainText('숫자 감시 중')
   await expect(exp.locator('.timer-digits')).toHaveText(/^00:0[1-5]$/)
+})
+
+// Synthetic reproduction of the dim rules visible in the reported OCR preview.
+test('EXP reads the numeric row despite dim horizontal bar borders', async ({ page }) => {
+  test.setTimeout(45_000)
+  await mockCapture(page)
+  await seedExperience(page)
+  await page.goto('/')
+  await beginCapture(page)
+  await drawExperience(page, '589,962,353,423,949 [67.780%]', false, true)
+  const exp = card(page, '경험치 변화')
+  await expect(exp.getByTestId('experience-value')).toHaveText('589,962,353,423,949', { timeout: 25_000 })
+  await expect(exp.locator('.tiny-status')).toContainText('숫자 감시 중')
 })

@@ -96,6 +96,14 @@ describe('experience numeric image preparation', () => {
     expect(antialiased.height).toBeLessThanOrEqual(64)
     expect(blackPixels(antialiased)).toBeGreaterThan(0)
   })
+  it.each([60, 100, 140, 180])('removes dim %s-level bar rules restored by grayscale without changing glyphs', level => {
+    const clean = glyphs(background(120, 32, [100, 155, 12]))
+    const bordered = glyphs(background(120, 32, [100, 155, 12]))
+    rectangle(bordered, 0, 2, 120, 2, [level, level, level])
+    rectangle(bordered, 0, 28, 120, 2, [level, level, level])
+    expect(prepareExperienceImage(bordered, { preserveAntialias: true }))
+      .toEqual(prepareExperienceImage(clean, { preserveAntialias: true }))
+  })
   it('normalizes varying green backgrounds in the antialias-preserving variant', () => {
     const dark = prepareExperienceImage(glyphs(background(120, 32, [50, 90, 10])), { preserveAntialias: true })
     const bright = prepareExperienceImage(glyphs(background(120, 32, [156, 206, 0])), { preserveAntialias: true })

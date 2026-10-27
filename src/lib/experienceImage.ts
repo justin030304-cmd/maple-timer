@@ -110,6 +110,27 @@ export function prepareExperienceImage(frame: PixelFrame, options: { preserveAnt
     }
   }
 
+  // The grayscale pass can restore dim borders that were below the initial
+  // white-text threshold. Remove their antialiased edges AFTER that pass too.
+  // Use continuous runs, rather than row density, to preserve separated digits.
+  if (grey) {
+    for (let y = 0; y < height; y++) {
+      let start = -1
+      for (let x = 0; x <= width; x++) {
+        const index = y * width + x
+        if (x < width && grey[index] < 245) {
+          if (start < 0) start = x
+        } else if (start >= 0) {
+          if (x - start >= horizontalLimit) {
+            grey.fill(255, y * width + start, y * width + x)
+            mask.fill(0, y * width + start, y * width + x)
+          }
+          start = -1
+        }
+      }
+    }
+  }
+
   let left = width, right = -1, top = height, bottom = -1, ink = 0
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
