@@ -1,0 +1,72 @@
+import type { ModuleKind, Monitor, Settings } from '../types'
+import { normalizeROI } from './roi'
+
+export const SETTINGS_KEY = 'maple-timer.settings.v1'
+export const DEFAULT_SETTINGS: Settings = {
+  volume: 0.5,
+  soundEnabled: true,
+  expIdleSec: 60,
+  monitors: [
+    { id: 'rune', name: '룬', kind: 'rune', enabled: true, roi: null, durationSec: 900, warnBeforeSec: 30 },
+    { id: 'buff-exp', name: '경험치 쿠폰', kind: 'buff', enabled: true, roi: null, durationSec: 1800, warnBeforeSec: 60 },
+    { id: 'buff-drop', name: '재물 획득의 비약', kind: 'buff', enabled: true, roi: null, durationSec: 7200, warnBeforeSec: 60 },
+    { id: 'exp', name: '경험치 변화', kind: 'exp', enabled: true, roi: null, durationSec: 60, warnBeforeSec: 10 },
+    { id: 'booster', name: '부스터', kind: 'booster', enabled: false, roi: null, durationSec: 180, warnBeforeSec: 15 },
+  ],
+}
+
+type StorageLike = Pick<Storage, 'getItem' | 'setItem'>
+const cloneDefaults = (): Settings => ({ ...DEFAULT_SETTINGS, monitors: DEFAULT_SETTINGS.monitors.map(monitor => ({ ...monitor })) })
+const kinds: ModuleKind[] = ['rune', 'buff', 'exp', 'booster']
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
+const bounded = (value: unknown, fallback: number, min: number, max: number) => typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback
+
+function browserStorage(): StorageLike | null {
+  try { return typeof window === 'undefined' ? null : window.localStorage } catch { return null }
+}
+
+function readMonitor(value: unknown): Monitor | null {
+  if (!isRecord(value) || typeof value.id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(value.id) || typeof value.name !== 'string' || !kinds.includes(value.kind as ModuleKind)) return null
+  const durationSec = Math.round(bounded(value.durationSec, 300, 1, 86400))
+  const roi = isRecord(value.roi) ? normalizeROI({ x: Number(value.roi.x), y: Number(value.roi.y), width: Number(value.roi.width), height: Number(value.roi.height) }) : null
+  return {
+    id: value.id, name: value.name.trim().slice(0, 60) || '이름 없는 모듈', kind: value.kind as ModuleKind,
+    enabled: typeof value.enabled === 'boolean' ? value.enabled : true,
+    roi, durationSec, warnBeforeSec: Math.round(bounded(value.warnBeforeSec, 30, 0, durationSec)),
+  }
+}
+
+/** Invalid, old, blocked or corrupt storage always falls back to usable settings. */
+export function loadSettings(storage: StorageLike | null = browserStorage()): Settings {
+  const defaults = cloneDefaults()
+  try {
+    const raw: unknown = JSON.parse(storage?.getItem(SETTINGS_KEY) ?? 'null')
+    if (!isRecord(raw) || raw.version !== 1 || !isRecord(raw.settings)) return defaults
+    const saved = raw.settings
+    const seen = new Set<string>()
+    const monitors = Array.isArray(saved.monitors) ? saved.monitors.slice(0, 50).map(readMonitor).filter((monitor): monitor is Monitor => {
+      if (!monitor || seen.has(monitor.id)) return false
+      seen.add(monitor.id)
+      return true
+    }) : defaults.monitors
+    // Core modules remain available even if old or manually edited storage omits them.
+    for (const core of defaults.monitors.filter(monitor => monitor.kind !== 'buff')) {
+      if (!monitors.some(monitor => monitor.kind === core.kind)) monitors.push(core)
+    }
+    return {
+      volume: bounded(saved.volume, defaults.volume, 0, 1),
+      soundEnabled: typeof saved.soundEnabled === 'boolean' ? saved.soundEnabled : defaults.soundEnabled,
+      expIdleSec: Math.round(bounded(saved.expIdleSec, defaults.expIdleSec, 5, 3600)),
+      monitors,
+    }
+  } catch { return defaults }
+}
+
+/** Returns false when browser privacy settings or storage limits prevent persistence. */
+export function saveSettings(settings: Settings, storage: StorageLike | null = browserStorage()): boolean {
+  try {
+    if (!storage) return false
+    storage.setItem(SETTINGS_KEY, JSON.stringify({ version: 1, settings }))
+    return true
+  } catch { return false }
+}
