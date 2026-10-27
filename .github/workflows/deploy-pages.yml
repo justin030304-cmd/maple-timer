@@ -17,7 +17,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pages: read
     steps:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -28,8 +27,6 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
       - name: Run unit tests
@@ -45,12 +42,15 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pages: write
       id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
       - name: Publish GitHub Pages
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
