@@ -212,6 +212,7 @@ export default function App() {
         <span>{experience.observation?.valid ? '현재 경험치' : '마지막 확인 경험치'}</span>
         <strong data-testid="experience-value">{experience.value?.display ?? '--'}</strong>
         {experience.observation?.loading && <p>숫자 인식 모델 준비 중입니다. 처음 사용할 때는 잠시 걸릴 수 있어요.</p>}
+        {runtime.status === 'error' && <p role="status" className="experience-error">{runtime.detail}</p>}
         {experience.observation?.confirming && <p>같은 숫자를 연속으로 확인하고 있습니다.</p>}
         {experience.value?.kind === 'percent' && <p>퍼센트만 읽고 있습니다. 작은 변화를 감지하려면 총 경험치 숫자도 포함해 주세요.</p>}
       </div>}
@@ -253,6 +254,7 @@ export default function App() {
           <p>연속 2회 같은 숫자가 확인되면 감시를 시작합니다. 숫자가 바뀌면 대기 시간을 다시 세며, 숫자를 읽지 못하면 알림을 보류하고 정상 판독 후 새로 시작합니다.</p>
           {experience.confidence !== null && <p>OCR 판독 점수: {Math.round(experience.confidence)}점 · 정확도 수치가 아닙니다.</p>}
           {experience.rawText && <p className="experience-raw">최근 읽힌 문자: {experience.rawText}</p>}
+          {experience.sourcePreview && <div><p>실제로 잘라낸 화면 · 흰 경험치 숫자 전체가 보여야 합니다.</p><img className="experience-preview" src={experience.sourcePreview} alt="경험치 원본 인식 영역" /></div>}
           {experience.preview && <img className="experience-preview" src={experience.preview} alt="경험치 숫자 인식 미리보기" />}
           <button className="button small" disabled={!stream || !monitor.enabled || !monitor.roi || experience.observation?.loading} onClick={() => { stopAudio(); experience.retry(); }}>숫자 인식 다시 시작</button>
           <p>영상은 브라우저 안에서만 분석합니다. 인식 모델과 글꼴·해상도에 따라 오인식할 수 있으므로 현재 경험치 표시가 게임 숫자와 맞는지 확인해 주세요.</p>

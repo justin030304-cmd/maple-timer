@@ -14,8 +14,9 @@ interface ExperienceView {
   confidence: number | null;
   rawText: string;
   preview: string | null;
+  sourcePreview: string | null;
 }
-const emptyView = (): ExperienceView => ({ observation: undefined, value: null, confidence: null, rawText: '', preview: null });
+const emptyView = (): ExperienceView => ({ observation: undefined, value: null, confidence: null, rawText: '', preview: null, sourcePreview: null });
 
 /** One local OCR job at a time. ROI changes invalidate in-flight results while
  * retaining the worker; stopping sharing terminates it and cancels all polling. */
@@ -55,9 +56,10 @@ export function useExperienceDetection({ stream, videoRef, monitor }: {
     const context = crop.getContext('2d', { willReadFrequently: true });
     const preparedCanvas = document.createElement('canvas');
     const preparedContext = preparedCanvas.getContext('2d');
+    let sourcePreview: string | null = null;
     const invalidate = (message: string, rawText = '', confidence: number | null = null) => {
       tracker.current = advanceExperienceState(tracker.current, null, Date.now()).state;
-      setView((previous) => ({ ...previous, value: tracker.current.value, rawText, confidence, preview: null,
+      setView((previous) => ({ ...previous, value: tracker.current.value, rawText, confidence, preview: null, sourcePreview,
         observation: { value: tracker.current.value?.display ?? null, lastChangedAt: null, lastReadAt: tracker.current.lastReadAt, valid: false, error: message, loading: false },
       }));
     };
@@ -77,6 +79,7 @@ export function useExperienceDetection({ stream, videoRef, monitor }: {
         if (!context || !preparedContext) throw new Error('경험치 인식용 화면을 만들 수 없습니다. 브라우저를 확인해 주세요.');
         if (crop.width !== width || crop.height !== height) { crop.width = width; crop.height = height; }
         context.drawImage(video, currentROI.x * video.videoWidth, currentROI.y * video.videoHeight, currentROI.width * video.videoWidth, currentROI.height * video.videoHeight, 0, 0, width, height);
+        sourcePreview = crop.toDataURL('image/png');
         capturedAt = Date.now();
         image = context.getImageData(0, 0, width, height);
         const prepared = prepareExperienceImage(image, { preserveAntialias: true });
@@ -107,6 +110,7 @@ export function useExperienceDetection({ stream, videoRef, monitor }: {
           confidence: result.confidence,
           rawText: result.text.slice(0, 180),
           preview: preparedCanvas.toDataURL('image/png'),
+          sourcePreview,
           observation: {
             value: next.state.value?.display ?? null,
             lastChangedAt: next.state.lastChangedAt,

@@ -382,3 +382,5 @@ footer > span:last-child { color: #7d896d; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+.experience-reading p.experience-error { color: #ae3030; font-size: 14px; overflow-wrap: anywhere; }
