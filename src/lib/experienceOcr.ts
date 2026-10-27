@@ -1,4 +1,5 @@
 import { createWorker, OEM, PSM } from 'tesseract.js';
+import { MIN_EXPERIENCE_CONFIDENCE, parseExperienceText } from './experience';
 
 export interface ExperienceOcrResult {
   text: string;
@@ -81,8 +82,22 @@ export async function createExperienceReader(): Promise<ExperienceReader> {
       if (busy) throw new Error('이전 경험치 숫자를 읽는 중입니다.');
       busy = true;
       try {
-        const { data } = await withDeadline(worker.recognize(image, {}, { text: true }), 15_000, '경험치 숫자 인식 시간이 초과되었습니다. 인식 영역을 좁히고 다시 켜 주세요.');
-        return { text: data.text.trim(), confidence: data.confidence };
+        return await withDeadline((async () => {
+          await worker.setParameters({ tessedit_pageseg_mode: PSM.RAW_LINE });
+          const first = (await worker.recognize(image, {}, { text: true })).data;
+          let best = { text: first.text.trim(), confidence: first.confidence };
+          if (parseExperienceText(best.text) && best.confidence >= MIN_EXPERIENCE_CONFIDENCE) return best;
+          // Small game glyphs can score poorly in raw-line mode. Try normal
+          // line segmentation without relaxing numeric validity or confidence.
+          await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_LINE });
+          for (const candidate of [image]) {
+            const { data } = await worker.recognize(candidate, {}, { text: true });
+            const next = { text: data.text.trim(), confidence: data.confidence };
+            if (parseExperienceText(next.text) && (!parseExperienceText(best.text) || next.confidence > best.confidence)) best = next;
+            if (parseExperienceText(best.text) && best.confidence >= MIN_EXPERIENCE_CONFIDENCE) break;
+          }
+          return best;
+        })(), 15_000, '경험치 숫자 인식 시간이 초과되었습니다. 인식 영역을 좁히고 다시 켜 주세요.');
       } catch (error) {
         await terminate();
         throw error;

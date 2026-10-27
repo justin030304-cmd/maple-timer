@@ -46,6 +46,8 @@ export function parseExperienceText(text: string): ExperienceValue | null {
   const normalized = text.normalize('NFKC').trim()
     .replace(/\s*,\s*/g, ',')
     .replace(/\s*\.\s*/g, '.')
+    // Two or more complete thousands groups cannot be a decimal percentage.
+    .replace(/^[0-9]{1,3}(?:\.[0-9]{3}){2,}(?=\s|[[(]|$)/, token => token.replaceAll('.', ','))
   if (!normalized || !/^[0-9,.\[\]()%\s]+$/.test(normalized)) return null
   const absolute = absoluteOnly.exec(normalized)
   if (absolute) return absoluteValue(absolute[1])
