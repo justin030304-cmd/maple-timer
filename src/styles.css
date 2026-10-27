@@ -361,6 +361,15 @@ footer > span:last-child { color: #7d896d; }
   .modal-actions > span { font-size: 11px; }
 }
 
+.timer-digits.rune-state { font-family: inherit; font-size: 26px; font-weight: 650; letter-spacing: -.6px; }
+.rune-audio-button { margin-top: 13px; width: 100%; }
+.rune-settings { display: grid; gap: 12px; }
+.rune-settings > p { margin-top: 0; }
+.rune-threshold { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.rune-threshold input { flex: 1; min-width: 0; }
+.rune-threshold > span { flex-shrink: 0; color: #6b528c; font-weight: 600; }
+.rune-score { color: #66567b !important; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }

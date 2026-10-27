@@ -109,15 +109,43 @@ async function changeFrame(page: Page, color = '#ffffff') {
   }, color)
 }
 
+
+/** Deliberately synthetic fixtures exercise the pipeline, not game-screenshot accuracy. */
+async function drawRuneFixture(page: Page, kind: 'diamond' | 'outside' | 'square' | 'circle' | 'annotation') {
+  await page.evaluate(kind => {
+    const capture = window.__capture!
+    const context = capture.canvas.getContext('2d')!
+    context.fillStyle = '#111111'
+    context.fillRect(0, 0, capture.canvas.width, capture.canvas.height)
+    if (kind === 'annotation') {
+      context.strokeStyle = '#ff2020'; context.lineWidth = 3
+      context.strokeRect(190, 100, 90, 70)
+    } else {
+      const centerX = kind === 'outside' ? 900 : 260
+      const centerY = kind === 'outside' ? 400 : 140
+      for (let y = -8; y <= 8; y++) for (let x = -8; x <= 8; x++) {
+        const distance = kind === 'square' ? Math.max(Math.abs(x), Math.abs(y)) : kind === 'circle' ? Math.sqrt(x * x + y * y) : Math.abs(x) + Math.abs(y)
+        if (distance > 8) continue
+        context.fillStyle = distance >= 7 ? '#d64adb' : distance >= 6 ? '#f5f5fb' : '#2adde7'
+        context.fillRect(centerX + x, centerY + y, 1, 1)
+      }
+    }
+    capture.track.requestFrame?.()
+  }, kind)
+}
+
+const runeMessage = '룬 아이콘 후보가 감지되었습니다. 미니맵을 확인해 주세요.'
+const runeLog = (page: Page) => page.locator('.activity-row').filter({ hasText: runeMessage })
+
 test('opens the real sharing workspace without demo controls or invented timers', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('heading', { name: '사냥에만 집중하세요.' })).toBeVisible()
   await expect(page.getByRole('button', { name: '화면 공유 시작', exact: true })).toBeVisible()
   await expect(page.getByText(/데모|가상/)).toHaveCount(0)
-  await expect(card(page, '룬').locator('.timer-digits')).toHaveText('--:--')
+  await expect(card(page, '룬').locator('.timer-digits')).toHaveText('대기')
   await expect(card(page, '경험치 변화').locator('.timer-digits')).toHaveText('--:--')
   await page.waitForTimeout(1100)
-  await expect(card(page, '룬').locator('.timer-digits')).toHaveText('--:--')
+  await expect(card(page, '룬').locator('.timer-digits')).toHaveText('대기')
   await expect(page.getByRole('button', { name: '데모 일시정지', exact: true })).toHaveCount(0)
 })
 
@@ -265,10 +293,10 @@ test('shows a real local canvas stream without pretending to recognize icons, an
   await page.goto('/')
   await beginCapture(page)
   expect(await page.evaluate(() => window.__captureOptions)).toEqual({ audio: false, video: { frameRate: { ideal: 10, max: 15 } } })
-  await expect(card(page, '룬').getByText('샘플 필요', { exact: true })).toBeVisible()
+  await expect(card(page, '룬').getByText('아이콘 감시 중', { exact: true })).toBeVisible()
   await expect(card(page, '경험치 쿠폰').getByText('샘플 필요', { exact: true })).toBeVisible()
   await expect(card(page, '경험치 변화').getByText('샘플 필요', { exact: true })).toBeVisible()
-  await expect(card(page, '룬').locator('.timer-digits')).toHaveText('--:--')
+  await expect(card(page, '룬').locator('.timer-digits')).toHaveText('감시 중')
   await expect.poll(() => page.locator('video').evaluate(video => (video as HTMLVideoElement).videoWidth)).toBe(1280)
   await page.evaluate(() => {
     const capture = window.__capture!
@@ -408,4 +436,131 @@ test('light theme uses readable type without desktop or mobile horizontal overfl
   await page.getByRole('button', { name: '알림 설정 열기', exact: true }).click()
   await expect(page.getByRole('dialog')).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})
+
+
+test('Rune synthetic diamond emits one Korean speech alert and rearms after absence and cooldown', async ({ page }) => {
+  await mockCapture(page)
+  await mockSpeech(page)
+  await seedRegions(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: '소리 알림 활성화', exact: true }).click()
+  await expect.poll(() => page.evaluate(() => window.__spoken!.length)).toBe(1)
+  await beginCapture(page)
+  const rune = card(page, '룬')
+  await expect(rune.locator('.timer-digits')).toHaveText('감시 중')
+  await drawRuneFixture(page, 'diamond')
+  await expect(rune.locator('.timer-digits')).toHaveText('발견')
+  const firstDetection = Date.now()
+  await expect(rune.getByText('룬 후보 감지', { exact: true })).toBeVisible()
+  await expect(runeLog(page)).toHaveCount(1)
+  await expect.poll(() => page.evaluate(() => window.__spoken!.length)).toBe(2)
+  expect(await page.evaluate(() => window.__spoken![1])).toMatchObject({ text: runeMessage, voiceURI: 'uri-sunhi' })
+  await page.waitForTimeout(1250)
+  await expect(runeLog(page)).toHaveCount(1)
+  expect(await page.evaluate(() => window.__spoken!.length)).toBe(2)
+  await changeFrame(page, '#111111')
+  await expect(rune.locator('.timer-digits')).toHaveText('감시 중', { timeout: 4500 })
+  await page.waitForTimeout(Math.max(0, 10_500 - (Date.now() - firstDetection)))
+  await drawRuneFixture(page, 'diamond')
+  await expect(runeLog(page)).toHaveCount(2)
+  await expect.poll(() => page.evaluate(() => window.__spoken!.length)).toBe(3)
+  await page.getByRole('button', { name: '공유 종료', exact: true }).click()
+  await expect(rune.locator('.timer-digits')).toHaveText('대기')
+})
+
+test('Rune ignores out-of-ROI icons, solid squares, circles, and red annotation rectangles', async ({ page }) => {
+  await mockCapture(page)
+  await mockSpeech(page)
+  await seedRegions(page)
+  await page.goto('/')
+  await beginCapture(page)
+  const rune = card(page, '룬')
+  await expect(rune.locator('.timer-digits')).toHaveText('감시 중')
+  for (const kind of ['outside', 'square', 'circle', 'annotation'] as const) {
+    await drawRuneFixture(page, kind)
+    await page.waitForTimeout(1300)
+    await expect(runeLog(page)).toHaveCount(0)
+    await expect(rune.locator('.timer-digits')).toHaveText('감시 중')
+  }
+  expect(await page.evaluate(() => window.__spoken!.length)).toBe(0)
+})
+
+test('Rune toggle stops detection and mute preserves only visible synthetic-icon alerts', async ({ page }) => {
+  await mockCapture(page)
+  await mockSpeech(page)
+  await seedRegions(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: '소리 알림 활성화', exact: true }).click()
+  await expect.poll(() => page.evaluate(() => window.__spoken!.length)).toBe(1)
+  await page.getByRole('switch', { name: '룬 활성화', exact: true }).click()
+  await beginCapture(page)
+  await drawRuneFixture(page, 'diamond')
+  await page.waitForTimeout(1300)
+  await expect(card(page, '룬').locator('.timer-digits')).toHaveText('OFF')
+  await expect(runeLog(page)).toHaveCount(0)
+  expect(await page.evaluate(() => window.__spoken!.length)).toBe(1)
+  await page.getByRole('button', { name: '소리 끄기', exact: true }).click()
+  await page.getByRole('switch', { name: '룬 활성화', exact: true }).click()
+  await expect(card(page, '룬').locator('.timer-digits')).toHaveText('발견')
+  await expect(runeLog(page)).toHaveCount(1)
+  expect(await page.evaluate(() => window.__spoken!.length)).toBe(1)
+})
+
+test('Rune analysis failure is explicit and never treated as a detected icon', async ({ page }) => {
+  await mockCapture(page)
+  await mockSpeech(page)
+  await seedRegions(page)
+  await page.addInitScript(() => {
+    const getContext = HTMLCanvasElement.prototype.getContext
+    Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', { value: function (this: HTMLCanvasElement, ...args: unknown[]) {
+      const context = Reflect.apply(getContext, this, args)
+      if (args[0] === '2d' && context) {
+        context.getImageData = () => { throw new DOMException('Rune frame read blocked', 'SecurityError') }
+      }
+      return context
+    } })
+  })
+  await page.goto('/')
+  await beginCapture(page)
+  const rune = card(page, '룬')
+  await expect(rune.locator('.tiny-status')).toContainText('실패')
+  await expect(runeLog(page)).toHaveCount(0)
+  expect(await page.evaluate(() => window.__spoken!.length)).toBe(0)
+  await page.getByRole('button', { name: '공유 종료', exact: true }).click()
+  await expect(rune.locator('.timer-digits')).toHaveText('대기')
+})
+
+test('Rune icon size and matching threshold persist without changing other modules', async ({ page }) => {
+  await page.goto('/')
+  const before = await stored(page)
+  const rune = card(page, '룬')
+  await rune.getByRole('button', { name: '룬', exact: true }).click()
+  await rune.getByRole('spinbutton', { name: '아이콘 최소 크기 (px)', exact: true }).fill('9')
+  await rune.getByRole('spinbutton', { name: '아이콘 최대 크기 (px)', exact: true }).fill('28')
+  await rune.getByRole('slider', { name: '일치 기준 (점)', exact: true }).fill('82')
+  expect((await stored(page)).runeDetection).toMatchObject({ minSize: 9, maxSize: 28, minScore: .82 })
+  await page.reload()
+  await rune.getByRole('button', { name: '룬', exact: true }).click()
+  await expect(rune.getByRole('spinbutton', { name: '아이콘 최소 크기 (px)', exact: true })).toHaveValue('9')
+  await expect(rune.getByRole('spinbutton', { name: '아이콘 최대 크기 (px)', exact: true })).toHaveValue('28')
+  await expect(rune.getByRole('slider', { name: '일치 기준 (점)', exact: true })).toHaveValue('82')
+  const after = await stored(page)
+  expect(after.monitors).toEqual(before.monitors)
+  expect(after.volume).toBe(before.volume)
+  expect(after.voiceURI).toBe(before.voiceURI)
+})
+
+test('Rune reappearance during cooldown does not repeat the previous icon alert', async ({ page }) => {
+  await mockCapture(page)
+  await seedRegions(page)
+  await page.goto('/')
+  await beginCapture(page)
+  await drawRuneFixture(page, 'diamond')
+  await expect(runeLog(page)).toHaveCount(1)
+  await changeFrame(page, '#111111')
+  await expect(card(page, '룬').locator('.timer-digits')).toHaveText('감시 중', { timeout: 4500 })
+  await drawRuneFixture(page, 'diamond')
+  await page.waitForTimeout(1300)
+  await expect(runeLog(page)).toHaveCount(1)
 })

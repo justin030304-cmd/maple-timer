@@ -30,8 +30,8 @@ describe('timers and honest detection states', () => {
     expect(timerRuntime({ ...expMonitor, roi: null }, 1000, 999999, options).status).toBe('unconfigured')
     expect(createRuntime(monitor).status).toBe('waiting')
   })
-  it('does not treat remembered timestamps as real rune, buff, or booster detections', () => {
-    for (const kind of ['rune', 'buff', 'booster'] as const) {
+  it('does not treat remembered timestamps as real buff or booster detections', () => {
+    for (const kind of ['buff', 'booster'] as const) {
       expect(timerRuntime({ ...monitor, kind }, 1000, 999999, options).status).toBe('no-sample')
     }
   })
@@ -50,6 +50,31 @@ describe('timers and honest detection states', () => {
     expect(formatTime(60.2)).toBe('01:01')
     expect(formatTime(-1)).toBe('00:00')
     expect(formatTime(Number.NaN)).toBe('00:00')
+  })
+})
+
+describe('live rune icon observations', () => {
+  const rune: Monitor = { ...monitor, kind: 'rune' }
+
+  it('waits for a first frame rather than inventing a detection or countdown', () => {
+    expect(timerRuntime(rune, 1000, 999999, options)).toMatchObject({ status: 'waiting', remainingSec: 0 })
+  })
+  it('watches real frames when no rune candidate is present', () => {
+    expect(timerRuntime(rune, null, 5000, { ...options, rune: { present: false, score: 0.2 } })).toMatchObject({ status: 'watching', remainingSec: 0 })
+  })
+  it('reports an observed candidate without implying activation or a cooldown', () => {
+    const runtime = timerRuntime(rune, 5000, 500000, { ...options, rune: { present: true, score: 0.86 } })
+    expect(runtime).toMatchObject({ status: 'detected', remainingSec: 0, lastEventAt: 5000 })
+    expect(runtime.detail).toContain('색상·모양 기반 실험')
+  })
+  it('stops observations when disabled, sharing ends, or its region is removed', () => {
+    const detected = { ...options, rune: { present: true, score: 0.9 } }
+    expect(timerRuntime({ ...rune, enabled: false }, 5000, 5000, detected).status).toBe('disabled')
+    expect(timerRuntime(rune, 5000, 5000, { ...detected, hasSource: false }).status).toBe('waiting')
+    expect(timerRuntime({ ...rune, roi: null }, 5000, 5000, detected).status).toBe('unconfigured')
+  })
+  it('surfaces analysis failures instead of keeping a stale detected status', () => {
+    expect(timerRuntime(rune, 5000, 5000, { ...options, rune: { present: true, score: null, frameError: '미니맵 프레임 읽기 실패' } })).toMatchObject({ status: 'error', detail: '미니맵 프레임 읽기 실패' })
   })
 })
 
@@ -82,13 +107,26 @@ describe('persistent settings', () => {
     const previous = { volume: 0.2, soundEnabled: false, expIdleSec: 45, monitors: [{ ...monitor, id: 'custom-buff' }, ...DEFAULT_SETTINGS.monitors.filter(item => item.kind !== 'buff')] }
     const storage = memoryStorage(JSON.stringify({ version: 1, settings: previous }))
     const loaded = loadSettings(storage)
-    expect(loaded).toMatchObject({ ...previous, voiceURI: '', speechRate: 1, notificationSound: 'speech' })
+    expect(loaded).toMatchObject({ ...previous, voiceURI: '', speechRate: 1, notificationSound: 'speech', runeDetection: { minSize: 5, maxSize: 36, minScore: 0.7 } })
     expect(loaded.monitors[0].roi).toEqual(monitor.roi)
   })
   it('preserves the selected speech voice and bounds invalid speech preferences', () => {
     const storage = memoryStorage(JSON.stringify({ version: 1, settings: { voiceURI: 'Microsoft SunHi Korean', speechRate: 9, notificationSound: 'invalid', monitors: DEFAULT_SETTINGS.monitors } }))
     const loaded = loadSettings(storage)
     expect(loaded).toMatchObject({ voiceURI: 'Microsoft SunHi Korean', speechRate: 1.3, notificationSound: 'speech' })
+  })
+  it('roundtrips customized rune detector thresholds', () => {
+    const storage = memoryStorage()
+    const settings = { ...DEFAULT_SETTINGS, runeDetection: { minSize: 9, maxSize: 48, minScore: 0.82 } }
+    expect(saveSettings(settings, storage)).toBe(true)
+    expect(loadSettings(storage).runeDetection).toEqual(settings.runeDetection)
+  })
+  it('bounds rune sizes and scores and preserves minimum-to-maximum ordering', () => {
+    const read = (runeDetection: unknown) => loadSettings(memoryStorage(JSON.stringify({ version: 1, settings: { runeDetection } }))).runeDetection
+    expect(read({ minSize: 999, maxSize: 1, minScore: 2 })).toEqual({ minSize: 64, maxSize: 64, minScore: 0.95 })
+    expect(read({ minSize: -1, maxSize: 999, minScore: -1 })).toEqual({ minSize: 3, maxSize: 128, minScore: 0.4 })
+    expect(read({ minSize: 64 })).toEqual({ minSize: 64, maxSize: 64, minScore: 0.7 })
+    expect(read('invalid')).toEqual(DEFAULT_SETTINGS.runeDetection)
   })
   it('roundtrips settings and custom buffs', () => {
     const storage = memoryStorage()
@@ -120,7 +158,9 @@ describe('persistent settings', () => {
   it('uses independent defaults between loads', () => {
     const loaded = loadSettings(null)
     loaded.monitors[0].enabled = false
+    loaded.runeDetection.minSize = 60
     expect(loadSettings(null).monitors[0].enabled).toBe(true)
+    expect(loadSettings(null).runeDetection.minSize).toBe(5)
     expect(SETTINGS_KEY).toContain('.v1')
   })
 })

@@ -5,6 +5,7 @@ import './ScreenPreview.css'
 
 export interface ScreenPreviewProps {
   stream: MediaStream | null
+  runeCandidate?: ROI | null
   monitors: Monitor[]
   editingId: string | null
   onSelectMonitor: (id: string | null) => void
@@ -24,7 +25,7 @@ type DragState = {
 const colorByKind = { rune: '#7962ad', buff: '#a16c21', exp: '#257b56', booster: '#3c7298' }
 const clamp = (value: number, min = 0, max = 1) => Math.max(min, Math.min(max, value))
 
-export function ScreenPreview({ stream, monitors, editingId, onSelectMonitor, onRoiChange, onVideoReady }: ScreenPreviewProps) {
+export function ScreenPreview({ runeCandidate, stream, monitors, editingId, onSelectMonitor, onRoiChange, onVideoReady }: ScreenPreviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const onVideoReadyRef = useRef(onVideoReady)
@@ -121,6 +122,8 @@ export function ScreenPreview({ stream, monitors, editingId, onSelectMonitor, on
           }} onError={() => setVideoError(true)} />
           {!stream && <div className="preview-empty"><div className="preview-empty-icon"><svg width="34" height="34" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="13" rx="2" stroke="currentColor" strokeWidth="1.4" /><path d="M8 21h8m-4-4v4m-3-11 3-3 3 3m-3-3v7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg></div><strong>함께 볼 화면을 선택해 주세요</strong><p>화면 공유 시작 버튼으로 게임 창 또는 화면을 연결하세요.</p><span>Chrome · 화면 영상은 기기 밖으로 전송되지 않습니다</span></div>}
           {stream && videoError && <div className="preview-empty"><strong>화면 영상을 재생할 수 없습니다</strong><p>화면 공유를 종료한 뒤 다시 연결해 주세요.</p></div>}
+
+        {stream && runeCandidate && <div className="rune-candidate" data-testid="rune-candidate" aria-hidden="true" style={{ left: `${runeCandidate.x * 100}%`, top: `${runeCandidate.y * 100}%`, width: `${runeCandidate.width * 100}%`, height: `${runeCandidate.height * 100}%` }}><span>룬 후보 · 실험</span></div>}
 
         {stream && monitors.map(monitor => {
           const isSelected = monitor.id === editingId

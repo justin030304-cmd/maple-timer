@@ -18,6 +18,12 @@ export interface Monitor {
   warnBeforeSec: number
 }
 
+export interface RuneDetectorSettings {
+  minSize: number
+  maxSize: number
+  minScore: number
+}
+
 export interface Settings {
   volume: number
   soundEnabled: boolean
@@ -25,12 +31,13 @@ export interface Settings {
   voiceURI: string
   speechRate: number
   expIdleSec: number
+  runeDetection: RuneDetectorSettings
   monitors: Monitor[]
 }
 
 export interface MonitorRuntime {
   remainingSec: number
-  status: 'waiting' | 'running' | 'warning' | 'expired' | 'disabled' | 'unconfigured' | 'no-sample' | 'error'
+  status: 'waiting' | 'running' | 'warning' | 'expired' | 'disabled' | 'unconfigured' | 'no-sample' | 'watching' | 'detected' | 'error'
   lastEventAt: number | null
   detail: string
 }

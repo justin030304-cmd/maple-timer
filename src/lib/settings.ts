@@ -1,4 +1,4 @@
-import type { ModuleKind, Monitor, Settings } from '../types'
+import type { ModuleKind, Monitor, RuneDetectorSettings, Settings } from '../types'
 import { normalizeROI } from './roi'
 
 export const SETTINGS_KEY = 'maple-timer.settings.v1'
@@ -9,6 +9,7 @@ export const DEFAULT_SETTINGS: Settings = {
   voiceURI: '',
   speechRate: 1,
   expIdleSec: 60,
+  runeDetection: { minSize: 5, maxSize: 36, minScore: 0.7 },
   monitors: [
     { id: 'rune', name: '룬', kind: 'rune', enabled: true, roi: null, durationSec: 900, warnBeforeSec: 30 },
     { id: 'buff-exp', name: '경험치 쿠폰', kind: 'buff', enabled: true, roi: null, durationSec: 1800, warnBeforeSec: 60 },
@@ -19,10 +20,21 @@ export const DEFAULT_SETTINGS: Settings = {
 }
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem'>
-const cloneDefaults = (): Settings => ({ ...DEFAULT_SETTINGS, monitors: DEFAULT_SETTINGS.monitors.map(monitor => ({ ...monitor })) })
+const cloneDefaults = (): Settings => ({ ...DEFAULT_SETTINGS, runeDetection: { ...DEFAULT_SETTINGS.runeDetection }, monitors: DEFAULT_SETTINGS.monitors.map(monitor => ({ ...monitor })) })
 const kinds: ModuleKind[] = ['rune', 'buff', 'exp', 'booster']
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const bounded = (value: unknown, fallback: number, min: number, max: number) => typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback
+
+function readRuneDetection(value: unknown): RuneDetectorSettings {
+  const saved = isRecord(value) ? value : {}
+  const defaults = DEFAULT_SETTINGS.runeDetection
+  const minSize = Math.round(bounded(saved.minSize, defaults.minSize, 3, 64))
+  return {
+    minSize,
+    maxSize: Math.round(bounded(saved.maxSize, Math.max(minSize, defaults.maxSize), minSize, 128)),
+    minScore: bounded(saved.minScore, defaults.minScore, 0.4, 0.95),
+  }
+}
 
 function browserStorage(): StorageLike | null {
   try { return typeof window === 'undefined' ? null : window.localStorage } catch { return null }
@@ -63,6 +75,7 @@ export function loadSettings(storage: StorageLike | null = browserStorage()): Se
       voiceURI: typeof saved.voiceURI === 'string' ? saved.voiceURI.slice(0, 512) : defaults.voiceURI,
       speechRate: bounded(saved.speechRate, defaults.speechRate, 0.7, 1.3),
       expIdleSec: Math.round(bounded(saved.expIdleSec, defaults.expIdleSec, 5, 3600)),
+      runeDetection: readRuneDetection(saved.runeDetection),
       monitors,
     }
   } catch { return defaults }

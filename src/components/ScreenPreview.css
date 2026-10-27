@@ -132,3 +132,6 @@
   .preview-empty p { font-size: 11px; margin: 6px 0 6px; }
   .preview-empty > span { font-size: 10px; }
 }
+
+.rune-candidate { position: absolute; z-index: 4; border: 2px solid #d33f88; box-shadow: 0 0 0 1px #fff9; pointer-events: none; }
+.rune-candidate > span { position: absolute; bottom: calc(100% + 5px); left: 50%; transform: translateX(-50%); white-space: nowrap; padding: 4px 7px; border-radius: 4px; background: #fff5fa; color: #96265d; border: 1px solid #e5afc9; font-size: 11px; }
