@@ -1,3 +1,4 @@
+import { readMonitorAudio } from './lib/monitorAudio';
 import RegionThumbnail from './components/RegionThumbnail';
 import RegionSelector from './components/RegionSelector';
 import { locateExperienceRegion } from './lib/experienceVisual';
@@ -119,6 +120,7 @@ export default function App() {
   };
 
   const updateMonitor = (id: string, patch: Partial<Monitor>) => {
+    if ('audio' in patch) stopAudio();
     if (['exp', 'rune'].includes(settings.monitors.find((monitor) => monitor.id === id)?.kind ?? '') && ('roi' in patch || 'enabled' in patch)) {
       setEvents((previous) => ({ ...previous, [id]: null }));
       notified.current[id] = '';
@@ -138,8 +140,8 @@ export default function App() {
     const message = '룬 아이콘 후보가 감지되었습니다. 미니맵을 확인해 주세요.';
     log(message, 'warning');
     notify(message);
-    void speakAlert(message);
-  }, [runeMonitor?.id, log, notify, speakAlert]);
+    void speakAlert(message, runeMonitor);
+  }, [runeMonitor, log, notify, speakAlert]);
   const { observation: runeObservation, candidate: runeCandidate } = useRuneDetection({
     stream, videoRef, monitor: runeMonitor, settings: settings.runeDetection, onDetected: onRuneDetected,
   });
@@ -187,7 +189,7 @@ export default function App() {
         : `${monitor.name} ${runtime.status === 'expired' ? '시간이 종료되었습니다.' : '종료 시간이 가까워졌습니다.'}`;
       log(text, 'warning');
       notify(text);
-      void speakAlert(text);
+      void speakAlert(text, monitor);
     }
   });
 
@@ -206,6 +208,7 @@ export default function App() {
     const runtime = runtimes[monitor.id];
     const expanded = expandedId === monitor.id;
     const meta = moduleMeta[monitor.kind];
+    const audio = readMonitorAudio(monitor.audio, monitor.kind);
     const isRune = monitor.kind === 'rune';
     const activeTimer = ['running', 'warning', 'expired'].includes(runtime.status);
     const detected = runtime.status === 'detected';
@@ -251,6 +254,12 @@ export default function App() {
         void preview();
       }}><Volume2 size={15} />룬 알림 소리 켜기</button>}
       {expanded && <div className="monitor-settings">
+        <div className="monitor-audio-settings">
+          <div className="monitor-audio-heading"><Volume2 size={17} /><strong>이 알림의 소리</strong><button className="button small" disabled={testing || audio.sound === 'silent'} onClick={() => void preview(monitor)}>{testing ? '재생 대기 중…' : '소리 미리 듣기'}</button></div>
+          <div className="field-pair"><label>알림 소리<select aria-label={`${monitor.name} 알림 소리`} value={audio.sound} onChange={event => { stopAudio(); updateMonitor(monitor.id, { audio: { ...audio, sound: event.target.value as typeof audio.sound } }); }}><option value="speech">한국어 TTS · 여성 음성 우선</option><option value="dingdong">띵동 벨소리</option><option value="chime">기본 알림음</option><option value="inherit">공통 알림 설정 사용</option><option value="silent">이 알림만 무음</option></select></label><label>개별 음량 · {Math.round(audio.volume * 100)}%<input type="range" min={0} max={1} step={.01} aria-label={`${monitor.name} 개별 음량`} value={audio.volume} onChange={event => updateMonitor(monitor.id, { audio: { ...audio, volume: Number(event.target.value) } })} /></label></div>
+          {audio.sound === 'speech' && <div className="field-pair"><label>읽어 줄 문구<input aria-label={`${monitor.name} 읽어 줄 문구`} maxLength={200} value={audio.speechText} placeholder="비워 두면 감지 내용을 읽습니다" onChange={event => updateMonitor(monitor.id, { audio: { ...audio, speechText: event.target.value } })} /></label><label>알림 음성<select aria-label={`${monitor.name} 알림 음성`} value={audio.voiceURI} onChange={event => updateMonitor(monitor.id, { audio: { ...audio, voiceURI: event.target.value } })}><option value="">한국어 여성 음성 우선 · 자동</option>{audio.voiceURI && !voices.some(voice => voice.voiceURI === audio.voiceURI) && <option value={audio.voiceURI}>저장된 음성 · 이 기기에서 사용 불가</option>}{voices.map(voice => <option key={voice.voiceURI} value={voice.voiceURI}>{voice.name}</option>)}</select></label></div>}
+          <p>개별 음량에 공통 음량을 곱해 재생합니다. 전체 음소거는 모든 알림에 적용됩니다.</p>
+        </div>
         {monitor.kind === 'buff' && <label>버프 이름<input aria-label="버프 이름" maxLength={40} value={monitor.name} onChange={(event) => updateMonitor(monitor.id, { name: event.target.value })} /></label>}
         {isRune ? <div className="rune-settings">
           <p>미니맵 부분을 인식 영역으로 지정해 주세요. 설명용 빨간 테두리가 아니라 안쪽의 보라·하늘색 또는 흰 테두리의 보라색 마름모를 찾습니다.</p>

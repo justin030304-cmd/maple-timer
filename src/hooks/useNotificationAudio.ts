@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Settings } from '../types';
+import { resolveMonitorAudio } from '../lib/monitorAudio';
+import type { Monitor, Settings } from '../types';
 import { getKoreanVoices, SpeechNotifier } from '../lib/speech';
 
 export function useNotificationAudio(settings: Settings, notify: (message: string) => void) {
@@ -10,12 +11,17 @@ export function useNotificationAudio(settings: Settings, notify: (message: strin
   const speechRef = useRef<SpeechNotifier | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
   const unlocked = useRef(false);
+  const audioEpoch = useRef(0);
+  const oscillators = useRef(new Set<OscillatorNode>());
   const mounted = useRef(false);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
   const stop = useCallback(() => {
+    audioEpoch.current++;
     speechRef.current?.stop();
+    oscillators.current.forEach(oscillator => { try { oscillator.stop(); } catch { /* Already ended. */ } });
+    oscillators.current.clear();
     setTesting(false);
   }, []);
 
@@ -40,6 +46,9 @@ export function useNotificationAudio(settings: Settings, notify: (message: strin
       mounted.current = false;
       clearTimeout(retry);
       synthesis?.removeEventListener('voiceschanged', updateVoices);
+      audioEpoch.current++;
+      oscillators.current.forEach(oscillator => { try { oscillator.stop(); } catch { /* Already ended. */ } });
+      oscillators.current.clear();
       speechRef.current?.stop();
       speechRef.current = null;
       void contextRef.current?.close();
@@ -52,29 +61,33 @@ export function useNotificationAudio(settings: Settings, notify: (message: strin
   }, [settings.soundEnabled, stop]);
   useEffect(() => { stop(); }, [settings.notificationSound, settings.voiceURI, stop]);
 
-  const chime = useCallback(async () => {
+  const chime = useCallback(async (kind: 'chime' | 'dingdong' = 'chime', volume = settingsRef.current.volume) => {
+    const epoch = audioEpoch.current;
     try {
       const context = contextRef.current ?? new AudioContext();
       contextRef.current = context;
       await context.resume();
-      if (!mounted.current || context.state !== 'running') return false;
+      if (!mounted.current || epoch !== audioEpoch.current || context.state !== 'running') return false;
       unlocked.current = true;
       setAudioReady(true);
-      if (settingsRef.current.volume === 0) return true;
+      if (volume === 0) return true;
       const start = context.currentTime;
-      [659.25, 880, 987.77].forEach((frequency, index) => {
-        const oscillator = context.createOscillator();
-        const gain = context.createGain();
-        oscillator.type = 'sine';
-        oscillator.frequency.value = frequency;
-        gain.gain.setValueAtTime(0, start + index * .16);
-        gain.gain.linearRampToValueAtTime(Math.max(.0001, settingsRef.current.volume * .2), start + index * .16 + .015);
-        gain.gain.exponentialRampToValueAtTime(.0001, start + index * .16 + .24);
-        oscillator.connect(gain);
-        gain.connect(context.destination);
-        oscillator.start(start + index * .16);
-        oscillator.stop(start + index * .16 + .25);
-        oscillator.onended = () => { oscillator.disconnect(); gain.disconnect(); };
+      const frequencies = kind === 'dingdong' ? [880, 659.25] : [659.25, 880, 987.77];
+      frequencies.forEach((frequency, index) => {
+        const at = start + index * (kind === 'dingdong' ? .34 : .16);
+        const duration = kind === 'dingdong' ? .65 : .25;
+        const partials = kind === 'dingdong' ? [1, 2] : [1];
+        partials.forEach(partial => {
+          const oscillator = context.createOscillator(), gain = context.createGain();
+          oscillator.type = 'sine'; oscillator.frequency.value = frequency * partial;
+          gain.gain.setValueAtTime(0, at);
+          gain.gain.linearRampToValueAtTime(Math.max(.0001, volume * (partial === 1 ? .2 : .04)), at + .012);
+          gain.gain.exponentialRampToValueAtTime(.0001, at + duration - .01);
+          oscillator.connect(gain); gain.connect(context.destination);
+          oscillators.current.add(oscillator);
+          oscillator.start(at); oscillator.stop(at + duration);
+          oscillator.onended = () => { oscillators.current.delete(oscillator); oscillator.disconnect(); gain.disconnect(); };
+        });
       });
       return true;
     } catch {
@@ -83,23 +96,26 @@ export function useNotificationAudio(settings: Settings, notify: (message: strin
     }
   }, [notify]);
 
-  const speak = useCallback(async (message: string, force = false) => {
+  const speak = useCallback(async (message: string, force = false, monitor?: Monitor) => {
     const current = settingsRef.current;
     if (!force && (!current.soundEnabled || !unlocked.current)) return false;
-    if (current.notificationSound === 'chime') return chime();
+    const profile = resolveMonitorAudio(current, message, monitor);
+    if (profile.sound === 'silent') return false;
+    if (profile.sound === 'chime' || profile.sound === 'dingdong') return chime(profile.sound, profile.volume);
+    const epoch = audioEpoch.current;
     speechRef.current ??= new SpeechNotifier();
     let fallback: Promise<boolean> | null = null;
     const useFallback = (reason: string) => {
-      if (!mounted.current) return;
+      if (!mounted.current || epoch !== audioEpoch.current) return;
       setTesting(false);
       setVoiceError(reason);
       if (!force && !settingsRef.current.soundEnabled) return;
-      fallback ??= chime();
+      fallback ??= chime('chime', profile.volume);
     };
-    const accepted = speechRef.current.say(message, {
-      volume: current.volume,
+    const accepted = speechRef.current.say(profile.text, {
+      volume: profile.volume,
       rate: current.speechRate,
-      voiceURI: current.voiceURI,
+      voiceURI: profile.voiceURI,
       onStart: () => {
         if (!mounted.current) return;
         unlocked.current = true;
@@ -117,13 +133,15 @@ export function useNotificationAudio(settings: Settings, notify: (message: strin
     return true;
   }, [chime]);
 
-  const preview = useCallback(async () => {
+  const preview = useCallback(async (monitor?: Monitor) => {
     stop();
     setTesting(true);
-    const result = await speak('알림 음성을 확인합니다. 경험치 영역에 변화가 없으면 알려드릴게요.', true);
-    if (!result || settingsRef.current.notificationSound === 'chime') setTesting(false);
+    const message = monitor ? `${monitor.name} 알림입니다.` : '알림 음성을 확인합니다. 경험치 영역에 변화가 없으면 알려드릴게요.';
+    const result = await speak(message, true, monitor);
+    if (!result || resolveMonitorAudio(settingsRef.current, message, monitor).sound !== 'speech') setTesting(false);
     return result;
   }, [speak, stop]);
 
-  return { voices, audioReady, voiceError, testing, preview, speakAlert: speak, stop };
+  const speakAlert = useCallback((message: string, monitor?: Monitor) => speak(message, false, monitor), [speak]);
+  return { voices, audioReady, voiceError, testing, preview, speakAlert, stop };
 }

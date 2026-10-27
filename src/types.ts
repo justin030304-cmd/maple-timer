@@ -8,6 +8,13 @@ export interface ROI {
   height: number
 }
 
+export interface MonitorAudio {
+  sound: 'inherit' | 'speech' | 'dingdong' | 'chime' | 'silent'
+  volume: number
+  voiceURI: string
+  speechText: string
+}
+
 export interface Monitor {
   id: string
   name: string
@@ -16,6 +23,7 @@ export interface Monitor {
   roi: ROI | null
   durationSec: number
   warnBeforeSec: number
+  audio?: MonitorAudio
 }
 
 export interface RuneDetectorSettings {

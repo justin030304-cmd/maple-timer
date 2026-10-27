@@ -7,6 +7,7 @@ type SpokenAlert = { text: string; voiceURI: string | null; volume: number; rate
 declare global {
   interface Window {
     __capture?: { canvas: HTMLCanvasElement; stream: MediaStream; track: MediaStreamTrack & { requestFrame?: () => void } }
+    __tones?: number[]
     __captureOptions?: DisplayMediaStreamOptions
     __spoken?: SpokenAlert[]
     __cancelCount?: number
@@ -93,7 +94,7 @@ async function mockSpeech(page: Page, delayedVoices = false, stalledPlayback = f
 async function seedRegions(page: Page, expIdleSec = 5) {
   await page.addInitScript(({ key, settings }) => {
     localStorage.setItem(key, JSON.stringify({ version: 1, settings }))
-  }, { key: SETTINGS_KEY, settings: { ...DEFAULT_SETTINGS, expDetectionMode: 'ocr', expIdleSec, monitors: DEFAULT_SETTINGS.monitors.map(monitor => ({ ...monitor, enabled: monitor.kind === 'exp' ? false : monitor.enabled, roi: { x: .1, y: .1, width: .4, height: .2 } })) } })
+  }, { key: SETTINGS_KEY, settings: { ...DEFAULT_SETTINGS, expDetectionMode: 'ocr', expIdleSec, monitors: DEFAULT_SETTINGS.monitors.map(monitor => ({ ...monitor, audio: {sound: 'inherit', volume: 1, voiceURI: '', speechText: ''}, enabled: monitor.kind === 'exp' ? false : monitor.enabled, roi: { x: .1, y: .1, width: .4, height: .2 } })) } })
 }
 
 async function seedExperience(page: Page, expIdleSec = 5) {
@@ -101,7 +102,7 @@ async function seedExperience(page: Page, expIdleSec = 5) {
     localStorage.setItem(key, JSON.stringify({ version: 1, settings }))
   }, { key: SETTINGS_KEY, settings: {
     ...DEFAULT_SETTINGS, expDetectionMode: 'ocr', expIdleSec,
-    monitors: DEFAULT_SETTINGS.monitors.map(monitor => ({ ...monitor, enabled: monitor.kind === 'exp', roi: monitor.kind === 'exp' ? { x: .1, y: .1, width: .4, height: .2 } : null })),
+    monitors: DEFAULT_SETTINGS.monitors.map(monitor => ({ ...monitor, audio: {sound: 'inherit', volume: 1, voiceURI: '', speechText: ''}, enabled: monitor.kind === 'exp', roi: monitor.kind === 'exp' ? { x: .1, y: .1, width: .4, height: .2 } : null })),
   } })
 }
 
@@ -742,7 +743,7 @@ test('visual EXP auto-locates real video digits, alerts on a frozen number and r
   await page.addInitScript(({key, settings}) => {
     localStorage.setItem(key, JSON.stringify({version: 1, settings}))
   }, {key: SETTINGS_KEY, settings: {...DEFAULT_SETTINGS, expDetectionMode: 'visual', expIdleSec: 5,
-    monitors: DEFAULT_SETTINGS.monitors.map(m => ({...m, enabled: m.kind === 'exp', roi: null}))}})
+    monitors: DEFAULT_SETTINGS.monitors.map(m => ({...m, audio: {sound: 'inherit', volume:1, voiceURI:'',speechText:''}, enabled: m.kind === 'exp', roi: null}))}})
   await page.route('**/experience-video-strips.png', route => route.fulfill({path: 'tests/fixtures/experience-video-strips.png', contentType: 'image/png'}))
   await page.goto('/')
   await page.getByRole('button', {name:'소리 알림 활성화', exact:true}).click()
@@ -881,4 +882,87 @@ test('region selector supports wheel zoom, keyboard focus and cancellation on a 
   await expect(dialog).toHaveCount(0)
   await expect(trigger).toBeFocused()
   expect((await stored(page)).monitors[0].roi).toEqual(original)
+})
+
+
+async function trackBellNotes(page: Page) {
+  await page.addInitScript(() => {
+    window.__tones = []
+    const create = AudioContext.prototype.createOscillator
+    AudioContext.prototype.createOscillator = function () {
+      const node = create.call(this), start = node.start.bind(node)
+      node.start = (when?:number) => { window.__tones!.push(node.frequency.value); start(when) }
+      return node
+    }
+  })
+}
+
+test('independent sound settings preview the requested female rune phrase and two-note EXP bell and persist', async ({page}) => {
+  await mockSpeech(page)
+  await trackBellNotes(page)
+  await page.goto('/')
+  const rune = card(page,'룬'), exp = card(page,'경험치 변화')
+  await rune.locator('.monitor-name').click()
+  await expect(rune.getByLabel('룬 알림 소리',{exact:true})).toHaveValue('speech')
+  await expect(rune.getByLabel('룬 읽어 줄 문구',{exact:true})).toHaveValue('룬 떳어요')
+  await rune.getByRole('button',{name:'소리 미리 듣기',exact:true}).click()
+  await expect.poll(()=>page.evaluate(()=>window.__spoken!.length)).toBe(1)
+  expect(await page.evaluate(()=>window.__spoken![0])).toMatchObject({text:'룬 떳어요',voiceURI:'uri-sunhi'})
+  await exp.locator('.monitor-name').click()
+  await expect(exp.getByLabel('경험치 변화 알림 소리',{exact:true})).toHaveValue('dingdong')
+  await exp.getByRole('button',{name:'소리 미리 듣기',exact:true}).click()
+  await expect.poll(()=>page.evaluate(()=>window.__tones!.length)).toBe(4)
+  expect(await page.evaluate(()=>window.__tones)).toEqual([880,1760,659.25,1318.5])
+  expect(await page.evaluate(()=>window.__spoken!.length)).toBe(1)
+  await exp.getByLabel('경험치 변화 개별 음량',{exact:true}).evaluate((input:HTMLInputElement)=>{input.value='.35';input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}))})
+  await exp.getByLabel('경험치 변화 알림 소리',{exact:true}).selectOption('silent')
+  await expect(exp.getByRole('button',{name:'소리 미리 듣기',exact:true})).toBeDisabled()
+  await page.reload()
+  await exp.locator('.monitor-name').click()
+  await expect(exp.getByLabel('경험치 변화 알림 소리',{exact:true})).toHaveValue('silent')
+  await expect(exp.getByLabel('경험치 변화 개별 음량',{exact:true})).toHaveValue('0.35')
+  await rune.locator('.monitor-name').click()
+  await expect(rune.getByLabel('룬 알림 소리',{exact:true})).toHaveValue('speech')
+  await expect(rune.getByLabel('룬 읽어 줄 문구',{exact:true})).toHaveValue('룬 떳어요')
+})
+
+test('real detections use rune speech and EXP dingdong independently and master mute suppresses both', async ({page}) => {
+  test.setTimeout(45_000)
+  await mockCapture(page)
+  await mockSpeech(page)
+  await trackBellNotes(page)
+  await page.addInitScript(({key,settings})=>localStorage.setItem(key,JSON.stringify({version:1,settings})),{key:SETTINGS_KEY,settings:{...DEFAULT_SETTINGS,notificationSound:'chime',voiceURI:'uri-injoon',expIdleSec:5,
+    monitors:DEFAULT_SETTINGS.monitors.map(m=>({...m,enabled:m.kind==='rune'||m.kind==='exp',roi:m.kind==='rune'?{x:.65,y:.1,width:.25,height:.25}:m.kind==='exp'?{x:.1,y:.17,width:.4,height:.06}:null}))}})
+  await page.goto('/')
+  await page.getByRole('button',{name:'소리 알림 활성화',exact:true}).click()
+  await expect.poll(()=>page.evaluate(()=>window.__tones!.length)).toBe(3)
+  await beginCapture(page)
+  await page.evaluate(()=>{window.__tones=[]})
+  await drawExperience(page,'589,962,353,423,949 [67.780%]')
+  await page.evaluate(()=>{
+    const capture=window.__capture!,ctx=capture.canvas.getContext('2d')!
+    for(let y=-8;y<=8;y++)for(let x=-8;x<=8;x++){
+      const distance=Math.abs(x)+Math.abs(y);if(distance>8)continue
+      ctx.fillStyle=distance>=7?'#f5f5fb':'#ae53e3';ctx.fillRect(900+x,140+y,1,1)
+    }
+    capture.track.requestFrame?.()
+  })
+  await expect.poll(()=>page.evaluate(()=>window.__spoken!.length)).toBe(1)
+  expect(await page.evaluate(()=>window.__spoken![0])).toMatchObject({text:'룬 떳어요',voiceURI:'uri-sunhi'})
+  const exp=card(page,'경험치 변화')
+  await expect(exp.getByText('알림 발생',{exact:true})).toBeVisible({timeout:9000})
+  await expect.poll(()=>page.evaluate(()=>window.__tones!.length)).toBe(4)
+  expect(await page.evaluate(()=>window.__tones)).toEqual([880,1760,659.25,1318.5])
+  expect(await page.evaluate(()=>window.__spoken!.length)).toBe(1)
+  await page.evaluate(()=>{window.__tones=[]})
+  await exp.locator('.monitor-name').click()
+  await exp.getByLabel('경험치 변화 개별 음량',{exact:true}).evaluate((input:HTMLInputElement)=>{input.value='.6';input.dispatchEvent(new Event('input',{bubbles:true}))})
+  await page.waitForTimeout(1000)
+  expect(await page.evaluate(()=>window.__tones!.length)).toBe(0)
+  await page.getByRole('button',{name:'소리 끄기',exact:true}).click()
+  await drawExperience(page,'589,963,012,000,000 [67.780%]')
+  await expect(exp.getByText('알림 발생',{exact:true})).toHaveCount(0)
+  await expect(exp.getByText('알림 발생',{exact:true})).toBeVisible({timeout:9000})
+  expect(await page.evaluate(()=>window.__tones!.length)).toBe(0)
+  expect(await page.evaluate(()=>window.__spoken!.length)).toBe(1)
 })

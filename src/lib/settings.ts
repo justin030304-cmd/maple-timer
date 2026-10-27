@@ -1,3 +1,4 @@
+import { readMonitorAudio } from './monitorAudio'
 import type { ModuleKind, Monitor, RuneDetectorSettings, Settings } from '../types'
 import { normalizeROI } from './roi'
 
@@ -48,6 +49,7 @@ function readMonitor(value: unknown): Monitor | null {
   return {
     id: value.id, name: value.name.trim().slice(0, 60) || '이름 없는 모듈', kind: value.kind as ModuleKind,
     enabled: typeof value.enabled === 'boolean' ? value.enabled : true,
+    ...(value.audio !== undefined ? { audio: readMonitorAudio(value.audio, value.kind as ModuleKind) } : {}),
     roi, durationSec, warnBeforeSec: Math.round(bounded(value.warnBeforeSec, 30, 0, durationSec)),
   }
 }
