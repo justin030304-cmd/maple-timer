@@ -1,3 +1,4 @@
+import { useExperienceVisual } from './useExperienceVisual';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import type { Monitor } from '../types';
@@ -20,7 +21,7 @@ const emptyView = (): ExperienceView => ({ observation: undefined, value: null, 
 
 /** One local OCR job at a time. ROI changes invalidate in-flight results while
  * retaining the worker; stopping sharing terminates it and cancels all polling. */
-export function useExperienceDetection({ stream, videoRef, monitor }: {
+function useExperienceOcr({ stream, videoRef, monitor }: {
   stream: MediaStream | null;
   videoRef: RefObject<HTMLVideoElement | null>;
   monitor: Monitor | undefined;
@@ -155,4 +156,16 @@ export function useExperienceDetection({ stream, videoRef, monitor }: {
 
   const retry = useCallback(() => { setRetryVersion((previous) => previous + 1); }, []);
   return { ...view, retry };
+}
+
+export function useExperienceDetection({ stream, videoRef, monitor, mode }: {
+  stream: MediaStream | null;
+  videoRef: RefObject<HTMLVideoElement | null>;
+  monitor: Monitor | undefined;
+  mode: 'ocr' | 'visual';
+}) {
+  const ocr = useExperienceOcr({ stream: mode === 'ocr' ? stream : null, videoRef, monitor });
+  const [retryVersion, setRetryVersion] = useState(0);
+  const visual = useExperienceVisual(mode === 'visual' ? stream : null, videoRef, monitor, retryVersion);
+  return mode === 'ocr' ? ocr : { ...emptyView(), ...visual, retry: () => setRetryVersion(value => value + 1) };
 }

@@ -93,14 +93,14 @@ async function mockSpeech(page: Page, delayedVoices = false, stalledPlayback = f
 async function seedRegions(page: Page, expIdleSec = 5) {
   await page.addInitScript(({ key, settings }) => {
     localStorage.setItem(key, JSON.stringify({ version: 1, settings }))
-  }, { key: SETTINGS_KEY, settings: { ...DEFAULT_SETTINGS, expIdleSec, monitors: DEFAULT_SETTINGS.monitors.map(monitor => ({ ...monitor, enabled: monitor.kind === 'exp' ? false : monitor.enabled, roi: { x: .1, y: .1, width: .4, height: .2 } })) } })
+  }, { key: SETTINGS_KEY, settings: { ...DEFAULT_SETTINGS, expDetectionMode: 'ocr', expIdleSec, monitors: DEFAULT_SETTINGS.monitors.map(monitor => ({ ...monitor, enabled: monitor.kind === 'exp' ? false : monitor.enabled, roi: { x: .1, y: .1, width: .4, height: .2 } })) } })
 }
 
 async function seedExperience(page: Page, expIdleSec = 5) {
   await page.addInitScript(({ key, settings }) => {
     localStorage.setItem(key, JSON.stringify({ version: 1, settings }))
   }, { key: SETTINGS_KEY, settings: {
-    ...DEFAULT_SETTINGS, expIdleSec,
+    ...DEFAULT_SETTINGS, expDetectionMode: 'ocr', expIdleSec,
     monitors: DEFAULT_SETTINGS.monitors.map(monitor => ({ ...monitor, enabled: monitor.kind === 'exp', roi: monitor.kind === 'exp' ? { x: .1, y: .1, width: .4, height: .2 } : null })),
   } })
 }
@@ -731,4 +731,43 @@ test('Rune white-outlined violet marker without cyan emits one speech alert', as
   await expect.poll(() => page.evaluate(() => window.__spoken!.filter(item => item.text === '룬 아이콘 후보가 감지되었습니다. 미니맵을 확인해 주세요.').length)).toBe(1)
   await page.waitForTimeout(1250)
   await expect(runeLog(page)).toHaveCount(1)
+})
+
+// Narrow numeric/bar strips extracted from the user-provided reference video.
+// No full game frames, character names or original video are distributed.
+test('visual EXP auto-locates real video digits, alerts on a frozen number and resets on change', async ({ page }) => {
+  test.setTimeout(40_000)
+  await mockCapture(page)
+  await mockSpeech(page)
+  await page.addInitScript(({key, settings}) => {
+    localStorage.setItem(key, JSON.stringify({version: 1, settings}))
+  }, {key: SETTINGS_KEY, settings: {...DEFAULT_SETTINGS, expDetectionMode: 'visual', expIdleSec: 5,
+    monitors: DEFAULT_SETTINGS.monitors.map(m => ({...m, enabled: m.kind === 'exp', roi: null}))}})
+  await page.route('**/experience-video-strips.png', route => route.fulfill({path: 'tests/fixtures/experience-video-strips.png', contentType: 'image/png'}))
+  await page.goto('/')
+  await page.getByRole('button', {name:'소리 알림 활성화', exact:true}).click()
+  await beginCapture(page)
+  const draw = async (index: number) => page.evaluate(async index => {
+    const img = new Image(); img.src = '/experience-video-strips.png'; await img.decode()
+    const capture = window.__capture!, ctx = capture.canvas.getContext('2d')!
+    capture.canvas.width = 1920; capture.canvas.height = 1080
+    ctx.fillStyle = '#111'; ctx.fillRect(0,0,1920,1080)
+    ctx.drawImage(img,0,index*16,1920,16,0,1064,1920,16)
+    capture.track.requestFrame?.()
+  }, index)
+  await draw(0)
+  const exp = card(page, '경험치 변화')
+  await expect(exp.locator('.tiny-status')).toContainText('숫자 감시 중', {timeout: 10_000})
+  await draw(1)
+  await expect(exp.getByText('알림 발생', {exact:true})).toBeVisible({timeout: 9000})
+  await expect(experienceLog(page)).toHaveCount(1)
+  await expect.poll(() => page.evaluate(() => window.__spoken!.filter(item => item.text === '경험치 숫자가 5초 동안 변하지 않았습니다.').length)).toBe(1)
+  await draw(4)
+  await expect(exp.locator('.tiny-status')).toContainText('숫자 감시 중')
+  await expect(exp.locator('.timer-digits')).toHaveText(/^00:0[1-5]$/)
+  await draw(5)
+  await expect(exp.locator('.tiny-status')).toContainText('인식 실패')
+  await page.getByRole('button', {name:'기록 지우기',exact:true}).click()
+  await page.waitForTimeout(5500)
+  await expect(experienceLog(page)).toHaveCount(0)
 })

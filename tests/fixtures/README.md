@@ -1,0 +1,3 @@
+`experience-video-strips.png` contains six 1920×16 strips extracted from the supplied 1920×1080 reference video, stacked vertically. Only the bottom experience bar and numeric row are retained; the original video and full game frames are excluded.
+
+The strips correspond to samples 1, 16, 20, 26, 27 and 33 from a 2 fps extraction. Rows 2–4 show a stable number with compression variation; row 5 changes the number; the last row is the blank end transition. Browser tests use these strips in a Canvas MediaStream to exercise automatic ROI selection, inactivity alerts, rearming on change, and suppression when digits disappear. These samples do not establish accuracy for other fonts or resolutions.

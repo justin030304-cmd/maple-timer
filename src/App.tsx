@@ -1,3 +1,4 @@
+import { locateExperienceRegion } from './lib/experienceVisual';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, ArrowDownLeft, ArrowRight, AudioLines, Bell, Check, ChevronDown, ChevronRight, CircleHelp, Crosshair, Focus, LayoutDashboard, Leaf, Maximize, Monitor as MonitorIcon, MonitorUp, Plus, Settings2, ShieldCheck, Sparkles, Square, Trash2, Volume2, VolumeX, WandSparkles, X, Zap } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -139,7 +140,30 @@ export default function App() {
     stream, videoRef, monitor: runeMonitor, settings: settings.runeDetection, onDetected: onRuneDetected,
   });
 
-  const experience = useExperienceDetection({ stream, videoRef, monitor: expMonitor });
+  const experience = useExperienceDetection({ stream, videoRef, monitor: expMonitor, mode: settings.expDetectionMode });
+
+  const [experienceRegionError, setExperienceRegionError] = useState('');
+  const findExperienceRegion = useCallback(() => {
+    const video = videoRef.current;
+    if (!stream || !video || video.readyState < 2) return false;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) return false;
+      context.drawImage(video, 0, 0);
+      const found = locateExperienceRegion(context.getImageData(0, 0, canvas.width, canvas.height));
+      if (!found) { setExperienceRegionError('하단 경험치 바를 찾지 못했습니다. 게임 화면 하단이 보이는지 확인하거나 직접 영역을 지정해 주세요.'); return false; }
+      setSettings(current => ({ ...current, monitors: current.monitors.map(item => item.kind === 'exp' ? { ...item, roi: found } : item) }));
+      setExperienceRegionError('');
+      return true;
+    } catch { setExperienceRegionError('공유 화면을 읽을 수 없습니다. 화면 공유 상태를 확인해 주세요.'); return false; }
+  }, [stream]);
+  useEffect(() => {
+    if (!stream || !expMonitor?.enabled || expMonitor.roi) return;
+    const timer = window.setInterval(findExperienceRegion, 1000);
+    return () => clearInterval(timer);
+  }, [stream, expMonitor?.enabled, expMonitor?.roi, findExperienceRegion]);
 
   const runtimes = Object.fromEntries(settings.monitors.map((monitor) => [monitor.id, timerRuntime(monitor, events[monitor.id] ?? null, now, {
     expIdleSec: settings.expIdleSec,
@@ -206,14 +230,14 @@ export default function App() {
       <div className="timer-track"><span className={meta.className} style={{ width: `${percentage}%` }} /></div>
       <div className="monitor-bottom">
         <button className={`roi-link ${monitor.roi ? 'configured' : ''}`} onClick={() => setEditingId(editingId === monitor.id ? null : monitor.id)}><Crosshair size={14} />{editingId === monitor.id ? '영역 지정 중' : monitor.roi ? '인식 영역 설정됨' : '인식 영역 지정'}</button>
-        <span>{isRune ? '색상·모양 · 실험' : monitor.kind === 'exp' ? '숫자 OCR · 실험' : '자동 인식 준비 중'}</span>
+        <span>{isRune ? '색상·모양 · 실험' : monitor.kind === 'exp' ? settings.expDetectionMode === 'visual' ? '숫자 모양 · 실험' : '숫자 OCR · 실험' : '자동 인식 준비 중'}</span>
       </div>
       {monitor.kind === 'exp' && <div className="experience-reading">
-        <span>{experience.observation?.valid ? '현재 경험치' : '마지막 확인 경험치'}</span>
-        <strong data-testid="experience-value">{experience.value?.display ?? '--'}</strong>
+        <span>{settings.expDetectionMode === 'visual' ? '숫자 모양 변화 감시' : experience.observation?.valid ? '현재 경험치' : '마지막 확인 경험치'}</span>
+        <strong data-testid="experience-value">{settings.expDetectionMode === 'visual' ? experience.observation?.valid ? '숫자 영역 확인됨' : '--' : experience.value?.display ?? '--'}</strong>
         {experience.observation?.loading && <p>숫자 인식 모델 준비 중입니다. 처음 사용할 때는 잠시 걸릴 수 있어요.</p>}
         {runtime.status === 'error' && <p role="status" className="experience-error">{runtime.detail}</p>}
-        {experience.observation?.confirming && <p>같은 숫자를 연속으로 확인하고 있습니다.</p>}
+        {experience.observation?.confirming && <p>{settings.expDetectionMode === 'visual' ? '숫자 영역을 연속 프레임에서 확인하고 있습니다.' : '같은 숫자를 연속으로 확인하고 있습니다.'}</p>}
         {experience.value?.kind === 'percent' && <p>퍼센트만 읽고 있습니다. 작은 변화를 감지하려면 총 경험치 숫자도 포함해 주세요.</p>}
       </div>}
       {isRune && !!stream && monitor.enabled && !audioReady && <button className="button small rune-audio-button" onClick={() => {
@@ -250,14 +274,18 @@ export default function App() {
         </div>}
         <p>{runtime.detail}</p>
         {monitor.kind === 'exp' && <div className="experience-settings">
-          <p>하단 연두색 경험치 바의 흰 숫자 전체를 인식 영역으로 지정해 주세요. 주변 효과나 바의 색 변화가 아니라 읽힌 경험치 값만 비교합니다.</p>
-          <p>연속 2회 같은 숫자가 확인되면 감시를 시작합니다. 숫자가 바뀌면 대기 시간을 다시 세며, 숫자를 읽지 못하면 알림을 보류하고 정상 판독 후 새로 시작합니다.</p>
+          <label>경험치 인식 방식<select value={settings.expDetectionMode} onChange={event => setSettings(current => ({ ...current, expDetectionMode: event.target.value as 'visual' | 'ocr' }))}><option value="visual">숫자 모양 변화 감시 · 작은 글자용</option><option value="ocr">숫자 읽기 · OCR</option></select></label>
+          <button className="button small" disabled={!stream} onClick={findExperienceRegion}>경험치 영역 자동 찾기</button>
+          {experienceRegionError && <p role="status">{experienceRegionError}</p>}
+          {settings.expDetectionMode === 'visual' && <p>작은 글자는 숫자 획의 변화를 비교합니다. 경험치 값으로 변환하지 않으며 바의 길이나 주변 이펙트는 비교하지 않습니다. 압축 잡음보다 작은 변화는 놓칠 수 있습니다.</p>}
+          <p>하단 연두색 경험치 바의 흰 숫자 전체를 인식 영역으로 지정해 주세요. 주변 효과나 바의 색 변화가 아니라 숫자 부분만 비교합니다.</p>
+          <p>{settings.expDetectionMode === 'visual' ? '연속 프레임에서 숫자 모양이 확인되면 감시를 시작합니다.' : '연속 2회 같은 숫자가 확인되면 감시를 시작합니다.'} 숫자가 바뀌면 대기 시간을 다시 세며, 숫자를 읽지 못하면 알림을 보류하고 정상 판독 후 새로 시작합니다.</p>
           {experience.confidence !== null && <p>OCR 판독 점수: {Math.round(experience.confidence)}점 · 정확도 수치가 아닙니다.</p>}
           {experience.rawText && <p className="experience-raw">최근 읽힌 문자: {experience.rawText}</p>}
           {experience.sourcePreview && <div><p>실제로 잘라낸 화면 · 흰 경험치 숫자 전체가 보여야 합니다.</p><img className="experience-preview" src={experience.sourcePreview} alt="경험치 원본 인식 영역" /></div>}
           {experience.preview && <img className="experience-preview" src={experience.preview} alt="경험치 숫자 인식 미리보기" />}
           <button className="button small" disabled={!stream || !monitor.enabled || !monitor.roi || experience.observation?.loading} onClick={() => { stopAudio(); experience.retry(); }}>숫자 인식 다시 시작</button>
-          <p>영상은 브라우저 안에서만 분석합니다. 인식 모델과 글꼴·해상도에 따라 오인식할 수 있으므로 현재 경험치 표시가 게임 숫자와 맞는지 확인해 주세요.</p>
+          <p>영상은 브라우저 안에서만 분석합니다. {settings.expDetectionMode === 'visual' ? '작은 숫자 모양의 변화로 무변화 시간을 추정합니다. 미리보기에 경험치 숫자만 보이는지 확인해 주세요.' : '인식 모델과 글꼴·해상도에 따라 오인식할 수 있으므로 현재 경험치 표시가 게임 숫자와 맞는지 확인해 주세요.'}</p>
         </div>}
 
         <div className="monitor-actions">
@@ -310,7 +338,7 @@ export default function App() {
                 <p>공유 화면의 비율로 저장됩니다. 창 크기나 해상도가 바뀌면 영역을 다시 확인해 주세요.</p>
               </div>}
             </section>
-            <div className="recognition-notice"><ShieldCheck size={23} /><div><strong>화면 인식 기능 안내</strong><p>룬은 지정한 미니맵에서 보라·하늘색 또는 흰 테두리의 보라색 마름모를 찾는 실험 감지입니다. 버프·부스터는 준비 중이며, 경험치는 하단 연두색 바의 숫자를 OCR로 읽습니다. 실제 판독값을 확인해 주세요.</p></div></div>
+            <div className="recognition-notice"><ShieldCheck size={23} /><div><strong>화면 인식 기능 안내</strong><p>룬은 지정한 미니맵에서 보라·하늘색 또는 흰 테두리의 보라색 마름모를 찾는 실험 감지입니다. 버프·부스터는 준비 중이며, 경험치는 숫자 모양 변화 감시와 OCR 중 선택할 수 있습니다. 실제 판독값을 확인해 주세요.</p></div></div>
             <section className="panel activity-panel">
               <div className="panel-heading"><div><AudioLines size={18} /><h2>활동 기록</h2><span className="count-badge">{logs.length}</span></div><button className="text-button" onClick={() => setLogs([])} disabled={!logs.length}>기록 지우기</button></div>
               <div className="activity-list" aria-live="polite">{logs.length ? logs.slice(0, 4).map((entry) => <div className="activity-row" key={entry.id}><span className={`log-dot ${entry.tone}`} /><time>{new Date(entry.time).toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><p>{entry.message}</p></div>) : <p className="empty-log">아직 기록이 없습니다. 감지 이벤트가 이곳에 표시됩니다.</p>}</div>
@@ -349,7 +377,7 @@ export default function App() {
         <ol className="guide-steps">
           <li><span>01</span><div><strong>화면 공유하기</strong><p>‘화면 공유 시작’을 눌러 게임 창이나 화면을 선택하세요. HTTPS 또는 localhost가 필요하며, 게임 창을 최소화하면 프레임이 멈출 수 있어요.</p></div></li>
           <li><span>02</span><div><strong>모듈별 인식 영역 지정하기</strong><p>룬 영역은 미니맵 부분에 좁게 맞춰 주세요. 화면 전체를 지정하면 작은 아이콘을 놓칠 수 있습니다. 영역 안을 드래그해 이동하거나 수치로 정밀하게 수정할 수 있습니다.</p></div></li>
-          <li><span>03</span><div><strong>경험치 숫자 영역 지정하기</strong><p>하단 연두색 바의 흰 경험치 숫자를 포함해 주세요. 현재 경험치가 실제 숫자와 맞는지 확인하고, 변화 없음 경고 시간을 설정하세요. 읽기 실패 중에는 알림을 울리지 않습니다.</p></div></li>
+          <li><span>03</span><div><strong>경험치 숫자 영역 지정하기</strong><p>하단 연두색 바의 흰 경험치 숫자를 포함해 주세요. 작은 글자는 숫자 모양 감시를 사용하고, OCR 모드에서는 판독값을 확인하세요. 변화 없음 경고 시간을 설정하세요. 읽기 실패 중에는 알림을 울리지 않습니다.</p></div></li>
           <li><span>04</span><div><strong>알림 목소리 선택하기</strong><p>알림 설정에서 한국어 여성 음성을 선택하고 테스트 버튼을 눌러 주세요. 룬은 미니맵 마름모 아이콘을 실험적으로 감지하며, 버프·부스터 자동 인식은 아직 준비 중입니다.</p></div></li>
         </ol>
         <div className="setting-note"><ShieldCheck size={23} /><p>영상은 브라우저 메모리에서만 처리합니다. 게임 메모리 접근, 자동 키 입력, 게임 조작 기능은 없습니다.</p></div>

@@ -1,0 +1,98 @@
+import type { PixelFrame } from './analysis'
+import type { ROI } from '../types'
+
+const pale = (r: number, g: number, b: number) => Math.min(r, g, b) >= 100 && Math.max(r, g, b) - Math.min(r, g, b) <= 70
+
+/** Locate a bottom lime EXP strip and its nearby pale numeric row. */
+export function locateExperienceRegion(frame: PixelFrame): ROI | null {
+  const { width, height, data } = frame
+  if (data.length !== width * height * 4) return null
+  let barY = -1
+  for (let y = height - 1; y >= Math.floor(height * .85); y--) {
+    let run = 0
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4
+      const r = data[i], g = data[i + 1], b = data[i + 2]
+      run = g > 100 && r > 45 && g >= r * .95 && b < g * .5 ? run + 1 : 0
+      if (run >= Math.max(30, width * .025)) { barY = y; break }
+    }
+    if (barY >= 0) break
+  }
+  if (barY < 0) return null
+  const top = Math.max(0, barY - Math.max(12, Math.round(height * .018)))
+  const bottom = Math.min(height - 1, barY + Math.max(8, Math.round(height * .012)))
+  const columns = new Uint16Array(width)
+  for (let y = top; y <= bottom; y++) {
+    let hits = 0
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4
+      if (pale(data[i], data[i + 1], data[i + 2])) hits++
+    }
+    if (hits > width * .65) continue
+    for (let x = Math.floor(width * .15); x < width * .85; x++) {
+      const i = (y * width + x) * 4
+      if (pale(data[i], data[i + 1], data[i + 2])) columns[x]++
+    }
+  }
+  let best: { left: number; right: number; score: number } | null = null
+  let start = -1, last = -1
+  for (let x = 0; x <= width; x++) {
+    if (x < width && columns[x] > 0) { if (start < 0) start = x; last = x }
+    if (start >= 0 && (x - last > 8 || x === width)) {
+      const span = last - start + 1
+      if (span >= 45 && span <= width * .55) {
+        const score = span / (1 + Math.abs((start + last) / 2 - width / 2) / width * 5)
+        if (!best || score > best.score) best = { left: start, right: last, score }
+      }
+      start = -1
+    }
+  }
+  if (!best) return null
+  const left = Math.max(0, best.left - 3), right = Math.min(width, best.right + 4)
+  // Trim to the glyph rows, rather than including the HP/MP rows above them.
+  let first = height, lastRow = -1
+  for (let y = top; y <= bottom; y++) {
+    let hits = 0
+    for (let x = left; x < right; x++) {
+      const i = (y * width + x) * 4
+      if (pale(data[i], data[i + 1], data[i + 2])) hits++
+    }
+    if (hits >= 3 && hits < (right - left) * .7) { first = Math.min(first, y); lastRow = y }
+  }
+  if (lastRow - first < 4 || lastRow - first > 60) return null
+  const y = Math.max(0, first - 2), end = Math.min(height, lastRow + 3)
+  return { x: left / width, y: y / height, width: (right - left) / width, height: (end - y) / height }
+}
+
+export interface GlyphSample { mask: Uint8Array; width: number; height: number; ink: number }
+/** Compare only pale digit strokes. Green fill and bar length are excluded. */
+export function experienceGlyphs(frame: PixelFrame): GlyphSample {
+  const { width, height, data } = frame
+  if (width < 30 || height < 5 || height > 80 || width > 4096 || data.length !== width * height * 4) throw new Error('경험치 숫자 한 줄만 포함하도록 영역을 지정해 주세요.')
+  const mask = new Uint8Array(width * height)
+  for (let y = 0; y < height; y++) {
+    let start = -1
+    for (let x = 0; x <= width; x++) {
+      const i = y * width + x, offset = i * 4
+      const foreground = x < width && data[offset + 3] >= 160 && pale(data[offset], data[offset + 1], data[offset + 2])
+      if (foreground) { mask[i] = 1; if (start < 0) start = x }
+      else if (start >= 0) { if (x - start > width * .65) mask.fill(0, y * width + start, i); start = -1 }
+    }
+  }
+  let ink = 0, groups = 0, inside = false
+  for (let x = 0; x < width; x++) {
+    let hits = 0
+    for (let y = 0; y < height; y++) hits += mask[y * width + x]
+    ink += hits
+    if (hits && !inside) groups++
+    inside = hits > 0
+  }
+  if (groups < 4 || ink < 25 || ink / mask.length > .65) throw new Error('경험치 숫자 모양을 확인하지 못했습니다. 영역과 가림 여부를 확인해 주세요.')
+  return { mask, width, height, ink }
+}
+export function glyphDifference(a: GlyphSample, b: GlyphSample): number {
+  if (a.width !== b.width || a.height !== b.height) return 1
+  let changed = 0
+  for (let i = 0; i < a.mask.length; i++) changed += Math.abs(a.mask[i] - b.mask[i])
+  return changed / Math.max(a.ink, b.ink, 1)
+}

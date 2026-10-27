@@ -8,6 +8,7 @@ export const DEFAULT_SETTINGS: Settings = {
   notificationSound: 'speech',
   voiceURI: '',
   speechRate: 1,
+  expDetectionMode: 'visual',
   expIdleSec: 60,
   runeDetection: { minSize: 5, maxSize: 36, minScore: 0.7 },
   monitors: [
@@ -74,6 +75,7 @@ export function loadSettings(storage: StorageLike | null = browserStorage()): Se
       notificationSound: saved.notificationSound === 'chime' ? 'chime' : 'speech',
       voiceURI: typeof saved.voiceURI === 'string' ? saved.voiceURI.slice(0, 512) : defaults.voiceURI,
       speechRate: bounded(saved.speechRate, defaults.speechRate, 0.7, 1.3),
+      expDetectionMode: saved.expDetectionMode === 'ocr' ? 'ocr' : 'visual',
       expIdleSec: Math.round(bounded(saved.expIdleSec, defaults.expIdleSec, 5, 3600)),
       runeDetection: readRuneDetection(saved.runeDetection),
       monitors,

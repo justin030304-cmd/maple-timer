@@ -27,7 +27,7 @@ export interface TimerOptions {
   rune?: { present: boolean; score: number | null; frameError?: string | null }
 }
 
-/** Only fresh, confirmed numeric OCR observations can drive the experience timer. */
+/** Only fresh, confirmed numeric-region observations can drive the experience timer. */
 export function timerRuntime(monitor: Monitor, lastEventAt: number | null, nowMs: number, options: TimerOptions): MonitorRuntime {
   const base = {
     remainingSec: monitor.kind === 'rune' ? 0 : monitor.kind === 'exp' ? options.expIdleSec : monitor.durationSec,

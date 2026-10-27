@@ -30,6 +30,7 @@ export interface Settings {
   notificationSound: 'speech' | 'chime'
   voiceURI: string
   speechRate: number
+  expDetectionMode: 'visual' | 'ocr'
   expIdleSec: number
   runeDetection: RuneDetectorSettings
   monitors: Monitor[]
