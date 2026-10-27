@@ -370,6 +370,15 @@ footer > span:last-child { color: #7d896d; }
 .rune-threshold > span { flex-shrink: 0; color: #6b528c; font-weight: 600; }
 .rune-score { color: #66567b !important; }
 
+.experience-reading { padding: 12px; margin-top: 13px; border: 1px solid #d9e8df; border-radius: 7px; background: #f6faf7; }
+.experience-reading > span { color: #58735f; font-size: 12px; }
+.experience-reading > strong { display: block; margin-top: 6px; color: #285b41; font-size: 16px; line-height: 1.7; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.experience-reading p { font-size: 12px; color: #657865; line-height: 1.8; margin-top: 6px; }
+.experience-settings { display: grid; gap: 10px; }
+.experience-settings > p { margin: 0; overflow-wrap: anywhere; }
+.experience-preview { display: block; width: 100%; max-height: 120px; object-fit: contain; background: white; border: 1px solid #dbe6dd; border-radius: 4px; padding: 5px; }
+.experience-raw { font-variant-numeric: tabular-nums; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }

@@ -4,19 +4,18 @@ import type { LucideIcon } from 'lucide-react';
 import ScreenPreview from './components/ScreenPreview';
 import { loadSettings, saveSettings } from './lib/settings';
 import { formatTime, timerRuntime } from './lib/engine';
-import { measureFrameChange } from './lib/analysis';
-import type { PixelFrame } from './lib/analysis';
 import { normalizeROI } from './lib/roi';
 import { isLikelyFemaleVoice, selectVoice } from './lib/speech';
 import { useNotificationAudio } from './hooks/useNotificationAudio';
 import { useRuneDetection } from './hooks/useRuneDetection';
+import { useExperienceDetection } from './hooks/useExperienceDetection';
 import type { ModuleKind, Monitor, ROI } from './types';
 
 type LogEntry = { id: number; time: number; message: string; tone: 'info' | 'success' | 'warning' };
 const moduleMeta: Record<ModuleKind, { title: string; sub: string; icon: LucideIcon; className: string }> = {
   rune: { title: '룬 인식', sub: '미니맵의 마름모 아이콘을 찾아요', icon: Sparkles, className: 'purple' },
   buff: { title: '버프 관리', sub: '나의 버프를 한눈에', icon: WandSparkles, className: 'amber' },
-  exp: { title: '경험치 감시', sub: '사냥이 멈추면 알려드려요', icon: Activity, className: 'mint' },
+  exp: { title: '경험치 인식', sub: '숫자가 멈추면 알려드려요', icon: Activity, className: 'mint' },
   booster: { title: '부스터', sub: '부스터의 남은 시간', icon: Zap, className: 'blue' },
 };
 
@@ -34,9 +33,6 @@ export default function App() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [modal, setModal] = useState<'settings' | 'guide' | null>(null);
-  const [experimentalPixels, setExperimentalPixels] = useState(false);
-  const [frameError, setFrameError] = useState<string | null>(null);
-  const [frameDelta, setFrameDelta] = useState<number | null>(null);
   const [storageOK, setStorageOK] = useState(true);
   const [toast, setToast] = useState('');
   const [logs, setLogs] = useState<LogEntry[]>([{ id: 0, time: Date.now(), message: '화면 공유를 시작하고 모듈별 인식 영역을 지정해 주세요.', tone: 'info' }]);
@@ -75,8 +71,6 @@ export default function App() {
     streamRef.current = null;
     setStream(null);
     setEvents({});
-    setFrameDelta(null);
-    setFrameError(null);
     setSharingState(ended ? 'ended' : 'idle');
     stopAudio();
   }, [stopAudio]);
@@ -105,7 +99,6 @@ export default function App() {
       setNow(Date.now());
       setEditingId(null);
       notified.current = {};
-      setExperimentalPixels(false);
       log('화면 공유가 연결되었습니다. 인식 영역을 지정해 주세요.', 'success');
     } catch (error) {
       if (!mounted.current) return;
@@ -133,7 +126,6 @@ export default function App() {
     if (normalized) updateMonitor(id, { roi: normalized });
   };
   const expMonitor = settings.monitors.find((monitor) => monitor.kind === 'exp');
-  const expROI = expMonitor?.roi;
   const runeMonitor = settings.monitors.find((monitor) => monitor.kind === 'rune');
   const onRuneDetected = useCallback((timestamp: number) => {
     if (!runeMonitor) return;
@@ -147,54 +139,23 @@ export default function App() {
     stream, videoRef, monitor: runeMonitor, settings: settings.runeDetection, onDetected: onRuneDetected,
   });
 
-  // Only a 160 x 40 crop stays in memory. No video, frame, or ROI is uploaded.
-  useEffect(() => {
-    setFrameError(null);
-    setFrameDelta(null);
-    if (!stream || !experimentalPixels || !expMonitor?.enabled || !expROI) return;
-    let previous: PixelFrame | null = null;
-    const canvas = document.createElement('canvas');
-    canvas.width = 160;
-    canvas.height = 40;
-    const context = canvas.getContext('2d', { willReadFrequently: true });
-    const id = window.setInterval(() => {
-      const video = videoRef.current;
-      if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
-        setFrameError('공유 프레임을 읽을 수 없습니다. 창이 최소화되었는지 확인해 주세요.');
-        return;
-      }
-      try {
-        if (!context) throw new Error('canvas');
-        context.drawImage(video, expROI.x * video.videoWidth, expROI.y * video.videoHeight, expROI.width * video.videoWidth, expROI.height * video.videoHeight, 0, 0, 160, 40);
-        const current = context.getImageData(0, 0, 160, 40);
-        const delta = measureFrameChange(previous, current);
-        setFrameDelta(delta);
-        setFrameError(null);
-        if (!previous || (delta !== null && delta > .015)) setEvents((value) => ({ ...value, [expMonitor.id]: Date.now() }));
-        previous = current;
-      } catch {
-        setFrameError('인식 영역의 프레임 분석에 실패했습니다. 영역을 다시 지정하거나 화면을 다시 공유해 주세요.');
-      }
-    }, 1000);
-    return () => clearInterval(id);
-  }, [stream, experimentalPixels, expMonitor?.enabled, expMonitor?.id, expROI?.x, expROI?.y, expROI?.width, expROI?.height]);
+  const experience = useExperienceDetection({ stream, videoRef, monitor: expMonitor });
 
   const runtimes = Object.fromEntries(settings.monitors.map((monitor) => [monitor.id, timerRuntime(monitor, events[monitor.id] ?? null, now, {
     expIdleSec: settings.expIdleSec,
     hasSource: !!stream,
-    experimentalPixels,
+    exp: monitor.kind === 'exp' ? experience.observation : undefined,
     rune: monitor.kind === 'rune' ? runeObservation : undefined,
-    frameError: monitor.kind === 'exp' ? frameError : null,
   })]));
   useEffect(() => {
     for (const monitor of settings.monitors) {
       const runtime = runtimes[monitor.id];
       const shouldAlert = monitor.kind === 'exp' ? runtime.status === 'expired' : runtime.status === 'warning' || runtime.status === 'expired';
-      const token = `${events[monitor.id]}:${runtime.status}:${monitor.kind === 'exp' ? settings.expIdleSec : monitor.durationSec}`;
+      const token = `${runtime.lastEventAt}:${runtime.status}:${monitor.kind === 'exp' ? settings.expIdleSec : monitor.durationSec}`;
       if (!shouldAlert || notified.current[monitor.id] === token) continue;
       notified.current[monitor.id] = token;
       const text = monitor.kind === 'exp'
-        ? `경험치 영역에 ${settings.expIdleSec}초 동안 픽셀 변화가 없습니다.`
+        ? `경험치 숫자가 ${settings.expIdleSec}초 동안 변하지 않았습니다.`
         : `${monitor.name} ${runtime.status === 'expired' ? '시간이 종료되었습니다.' : '종료 시간이 가까워졌습니다.'}`;
       log(text, 'warning');
       notify(text);
@@ -223,9 +184,9 @@ export default function App() {
     const watching = runtime.status === 'watching';
     const statusLabel = !monitor.enabled ? '비활성화'
       : detected ? '룬 후보 감지' : watching ? '아이콘 감시 중'
-      : runtime.status === 'running' ? '변화 감시 중'
+      : runtime.status === 'running' ? '숫자 감시 중'
       : runtime.status === 'warning' ? '종료 임박' : runtime.status === 'expired' ? '알림 발생'
-      : runtime.status === 'no-sample' ? '샘플 필요' : runtime.status === 'error' ? '분석 실패' : '대기 중';
+      : runtime.status === 'no-sample' ? '샘플 필요' : runtime.status === 'error' ? monitor.kind === 'exp' ? '인식 실패' : '분석 실패' : '대기 중';
     const digits = !monitor.enabled ? 'OFF'
       : isRune ? detected ? '발견' : watching ? '감시 중' : runtime.status === 'error' ? '확인 필요' : '대기'
       : activeTimer ? formatTime(runtime.remainingSec) : '--:--';
@@ -245,8 +206,15 @@ export default function App() {
       <div className="timer-track"><span className={meta.className} style={{ width: `${percentage}%` }} /></div>
       <div className="monitor-bottom">
         <button className={`roi-link ${monitor.roi ? 'configured' : ''}`} onClick={() => setEditingId(editingId === monitor.id ? null : monitor.id)}><Crosshair size={14} />{editingId === monitor.id ? '영역 지정 중' : monitor.roi ? '인식 영역 설정됨' : '인식 영역 지정'}</button>
-        <span>{isRune ? '색상·모양 · 실험' : monitor.kind === 'exp' && experimentalPixels ? '픽셀 변화 · 실험' : '자동 인식 준비 중'}</span>
+        <span>{isRune ? '색상·모양 · 실험' : monitor.kind === 'exp' ? '숫자 OCR · 실험' : '자동 인식 준비 중'}</span>
       </div>
+      {monitor.kind === 'exp' && <div className="experience-reading">
+        <span>{experience.observation?.valid ? '현재 경험치' : '마지막 확인 경험치'}</span>
+        <strong data-testid="experience-value">{experience.value?.display ?? '--'}</strong>
+        {experience.observation?.loading && <p>숫자 인식 모델 준비 중입니다. 처음 사용할 때는 잠시 걸릴 수 있어요.</p>}
+        {experience.observation?.confirming && <p>같은 숫자를 연속으로 확인하고 있습니다.</p>}
+        {experience.value?.kind === 'percent' && <p>퍼센트만 읽고 있습니다. 작은 변화를 감지하려면 총 경험치 숫자도 포함해 주세요.</p>}
+      </div>}
       {isRune && !!stream && monitor.enabled && !audioReady && <button className="button small rune-audio-button" onClick={() => {
         setSettings((current) => ({ ...current, soundEnabled: true }));
         void preview();
@@ -280,15 +248,16 @@ export default function App() {
           {monitor.kind !== 'exp' && <label>미리 알림 (초)<input type="number" min={0} max={monitor.durationSec} value={monitor.warnBeforeSec} onChange={(event) => updateMonitor(monitor.id, { warnBeforeSec: Math.max(0, Math.min(monitor.durationSec, Number(event.target.value))) })} /></label>}
         </div>}
         <p>{runtime.detail}</p>
-        {monitor.kind === 'exp' && <>
-          <label className="checkbox-label"><input type="checkbox" checked={experimentalPixels} onChange={(event) => {
-            setExperimentalPixels(event.target.checked);
-            setEvents((value) => ({ ...value, [monitor.id]: null }));
-            notified.current[monitor.id] = '';
-            stopAudio();
-          }} />실험용 픽셀 변화 감시 켜기</label>
-          <p>경험치 숫자를 읽지 않습니다. ROI의 평균 픽셀 차이 1.5%를 변화로 취급하므로 애니메이션에 반응하거나 작은 변화를 놓칠 수 있습니다.{frameDelta !== null ? ` 현재 차이 ${(frameDelta * 100).toFixed(2)}%` : ''}</p>
-        </>}
+        {monitor.kind === 'exp' && <div className="experience-settings">
+          <p>하단 연두색 경험치 바의 흰 숫자 전체를 인식 영역으로 지정해 주세요. 주변 효과나 바의 색 변화가 아니라 읽힌 경험치 값만 비교합니다.</p>
+          <p>연속 2회 같은 숫자가 확인되면 감시를 시작합니다. 숫자가 바뀌면 대기 시간을 다시 세며, 숫자를 읽지 못하면 알림을 보류하고 정상 판독 후 새로 시작합니다.</p>
+          {experience.confidence !== null && <p>OCR 판독 점수: {Math.round(experience.confidence)}점 · 정확도 수치가 아닙니다.</p>}
+          {experience.rawText && <p className="experience-raw">최근 읽힌 문자: {experience.rawText}</p>}
+          {experience.preview && <img className="experience-preview" src={experience.preview} alt="경험치 숫자 인식 미리보기" />}
+          <button className="button small" disabled={!stream || !monitor.enabled || !monitor.roi || experience.observation?.loading} onClick={() => { stopAudio(); experience.retry(); }}>숫자 인식 다시 시작</button>
+          <p>영상은 브라우저 안에서만 분석합니다. 인식 모델과 글꼴·해상도에 따라 오인식할 수 있으므로 현재 경험치 표시가 게임 숫자와 맞는지 확인해 주세요.</p>
+        </div>}
+
         <div className="monitor-actions">
           {monitor.roi && <button className="text-button" onClick={() => updateMonitor(monitor.id, { roi: null })}>영역 초기화</button>}
           {monitor.kind === 'buff' && <button className="icon-button danger" aria-label={`${monitor.name} 삭제`} onClick={() => {
@@ -311,7 +280,7 @@ export default function App() {
       </nav>
       <div className="sidebar-tip"><div className="mini-leaf"><Leaf size={21} /></div><strong>조금 더 편안한 사냥</strong><p>타이밍은 맡겨두고,<br />나만의 페이스로 즐기세요.</p><span>MADE FOR MAPLERS <span>↗</span></span></div>
       <div className="sidebar-bottom"><div className="local-dot" /><div><strong>내 브라우저에서만 처리</strong><small>화면 영상은 전송되지 않아요</small></div><ShieldCheck size={18} /></div>
-      <div className="sidebar-version"><span>MAPLE WATCH</span><span>v0.3.0 BETA</span></div>
+      <div className="sidebar-version"><span>MAPLE WATCH</span><span>v0.4.0 BETA</span></div>
     </aside>
     <div className="main-shell">
       <header className="topbar"><div className="breadcrumb">워크스페이스<ChevronRight size={15} /><strong>대시보드</strong></div><div className="topbar-right"><span className="privacy"><ShieldCheck size={16} />프라이버시 우선</span><span className="topbar-separator" /><button className="icon-button" aria-label="알림 설정 열기" onClick={() => setModal('settings')}><Bell size={20} /></button><span className="avatar">M</span></div></header>
@@ -339,7 +308,7 @@ export default function App() {
                 <p>공유 화면의 비율로 저장됩니다. 창 크기나 해상도가 바뀌면 영역을 다시 확인해 주세요.</p>
               </div>}
             </section>
-            <div className="recognition-notice"><ShieldCheck size={23} /><div><strong>화면 인식 기능 안내</strong><p>룬은 지정한 미니맵에서 보라·하늘색 마름모를 찾는 실험 감지입니다. 버프·부스터는 준비 중이며, 경험치 감시는 숫자를 읽는 OCR이 아닙니다.</p></div></div>
+            <div className="recognition-notice"><ShieldCheck size={23} /><div><strong>화면 인식 기능 안내</strong><p>룬은 지정한 미니맵에서 보라·하늘색 마름모를 찾는 실험 감지입니다. 버프·부스터는 준비 중이며, 경험치는 하단 연두색 바의 숫자를 OCR로 읽습니다. 실제 판독값을 확인해 주세요.</p></div></div>
             <section className="panel activity-panel">
               <div className="panel-heading"><div><AudioLines size={18} /><h2>활동 기록</h2><span className="count-badge">{logs.length}</span></div><button className="text-button" onClick={() => setLogs([])} disabled={!logs.length}>기록 지우기</button></div>
               <div className="activity-list" aria-live="polite">{logs.length ? logs.slice(0, 4).map((entry) => <div className="activity-row" key={entry.id}><span className={`log-dot ${entry.tone}`} /><time>{new Date(entry.time).toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><p>{entry.message}</p></div>) : <p className="empty-log">아직 기록이 없습니다. 감지 이벤트가 이곳에 표시됩니다.</p>}</div>
@@ -358,7 +327,7 @@ export default function App() {
     {modal && <div className="modal-backdrop" onClick={(event) => { if (event.target === event.currentTarget) setModal(null); }}><Modal title={modal === 'settings' ? '나에게 맞는 알림' : 'Maple Watch 시작하기'} onClose={() => setModal(null)}>
       {modal === 'settings' ? <>
         <p className="modal-description">알림을 한국어 음성으로 들어보세요. 설정은 이 브라우저에 자동 저장됩니다.</p>
-        <div className="settings-row"><div><strong>소리 알림</strong><p>룬 아이콘이 나타나거나 경험치 영역에 변화가 없을 때 알려드려요</p></div><Toggle checked={settings.soundEnabled} onChange={() => setSettings((current) => ({ ...current, soundEnabled: !current.soundEnabled }))} label="소리 알림 활성화" /></div>
+        <div className="settings-row"><div><strong>소리 알림</strong><p>룬 아이콘이 나타나거나 경험치 숫자가 멈추면 알려드려요</p></div><Toggle checked={settings.soundEnabled} onChange={() => setSettings((current) => ({ ...current, soundEnabled: !current.soundEnabled }))} label="소리 알림 활성화" /></div>
         <div className="speech-settings">
           <label>알림 방식<select aria-label="알림 방식" value={settings.notificationSound} onChange={(event) => setSettings((current) => ({ ...current, notificationSound: event.target.value as 'speech' | 'chime' }))}><option value="speech">한국어 TTS 음성</option><option value="chime">기본 알림음</option></select></label>
           {settings.notificationSound === 'speech' && <>
@@ -378,7 +347,7 @@ export default function App() {
         <ol className="guide-steps">
           <li><span>01</span><div><strong>화면 공유하기</strong><p>‘화면 공유 시작’을 눌러 게임 창이나 화면을 선택하세요. HTTPS 또는 localhost가 필요하며, 게임 창을 최소화하면 프레임이 멈출 수 있어요.</p></div></li>
           <li><span>02</span><div><strong>모듈별 인식 영역 지정하기</strong><p>룬 영역은 미니맵 부분에 좁게 맞춰 주세요. 화면 전체를 지정하면 작은 아이콘을 놓칠 수 있습니다. 영역 안을 드래그해 이동하거나 수치로 정밀하게 수정할 수 있습니다.</p></div></li>
-          <li><span>03</span><div><strong>경험치 픽셀 감시 켜기</strong><p>경험치 모듈의 설정을 펼쳐 실험용 감시를 켜세요. 설정 시간 동안 영역에 변화가 없으면 알립니다. 숫자 판독 기능은 아니므로 오탐과 누락이 있을 수 있어요.</p></div></li>
+          <li><span>03</span><div><strong>경험치 숫자 영역 지정하기</strong><p>하단 연두색 바의 흰 경험치 숫자를 포함해 주세요. 현재 경험치가 실제 숫자와 맞는지 확인하고, 변화 없음 경고 시간을 설정하세요. 읽기 실패 중에는 알림을 울리지 않습니다.</p></div></li>
           <li><span>04</span><div><strong>알림 목소리 선택하기</strong><p>알림 설정에서 한국어 여성 음성을 선택하고 테스트 버튼을 눌러 주세요. 룬은 미니맵 마름모 아이콘을 실험적으로 감지하며, 버프·부스터 자동 인식은 아직 준비 중입니다.</p></div></li>
         </ol>
         <div className="setting-note"><ShieldCheck size={23} /><p>영상은 브라우저 메모리에서만 처리합니다. 게임 메모리 접근, 자동 키 입력, 게임 조작 기능은 없습니다.</p></div>

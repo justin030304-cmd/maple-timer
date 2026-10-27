@@ -6,3 +6,6 @@ test-results/
 .env
 .env.*
 !.env.example
+
+# Recreated from package-lock integrity-checked OCR dependencies.
+public/ocr/
