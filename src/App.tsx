@@ -1,3 +1,5 @@
+import RegionThumbnail from './components/RegionThumbnail';
+import RegionSelector from './components/RegionSelector';
 import { locateExperienceRegion } from './lib/experienceVisual';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, ArrowDownLeft, ArrowRight, AudioLines, Bell, Check, ChevronDown, ChevronRight, CircleHelp, Crosshair, Focus, LayoutDashboard, Leaf, Maximize, Monitor as MonitorIcon, MonitorUp, Plus, Settings2, ShieldCheck, Sparkles, Square, Trash2, Volume2, VolumeX, WandSparkles, X, Zap } from 'lucide-react';
@@ -14,10 +16,10 @@ import type { ModuleKind, Monitor, ROI } from './types';
 
 type LogEntry = { id: number; time: number; message: string; tone: 'info' | 'success' | 'warning' };
 const moduleMeta: Record<ModuleKind, { title: string; sub: string; icon: LucideIcon; className: string }> = {
-  rune: { title: '룬 인식', sub: '미니맵의 마름모 아이콘을 찾아요', icon: Sparkles, className: 'purple' },
-  buff: { title: '버프 관리', sub: '나의 버프를 한눈에', icon: WandSparkles, className: 'amber' },
-  exp: { title: '경험치 인식', sub: '숫자가 멈추면 알려드려요', icon: Activity, className: 'mint' },
-  booster: { title: '부스터', sub: '부스터의 남은 시간', icon: Zap, className: 'blue' },
+  rune: { title: '룬 알림', sub: '미니맵의 마름모 아이콘을 찾아요', icon: Sparkles, className: 'purple' },
+  buff: { title: '버프 알림', sub: '나의 버프를 한눈에', icon: WandSparkles, className: 'amber' },
+  exp: { title: '사냥 멈춤 알림', sub: '숫자가 멈추면 알려드려요', icon: Activity, className: 'mint' },
+  booster: { title: '부스터 알림', sub: '부스터의 남은 시간', icon: Zap, className: 'blue' },
 };
 
 function Toggle({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) {
@@ -32,6 +34,7 @@ export default function App() {
   const [events, setEvents] = useState<Record<string, number | null>>({});
   const [now, setNow] = useState(Date.now());
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [regionMonitorId, setRegionMonitorId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [modal, setModal] = useState<'settings' | 'guide' | null>(null);
   const [storageOK, setStorageOK] = useState(true);
@@ -71,6 +74,7 @@ export default function App() {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     setStream(null);
+    setRegionMonitorId(null);
     setEvents({});
     setSharingState(ended ? 'ended' : 'idle');
     stopAudio();
@@ -216,22 +220,24 @@ export default function App() {
       : activeTimer ? formatTime(runtime.remainingSec) : '--:--';
     const percentage = isRune ? detected ? 100 : 0
       : monitor.enabled && activeTimer ? Math.max(0, Math.min(100, runtime.remainingSec / (monitor.kind === 'exp' ? settings.expIdleSec : monitor.durationSec) * 100)) : 0;
-    return <div className={`monitor-item ${!monitor.enabled ? 'disabled' : ''}`} key={monitor.id}>
+    return <div className={`monitor-item kind-${monitor.kind} ${!monitor.enabled ? 'disabled' : ''}`} key={monitor.id}>
       <div className="monitor-row">
         <button className="monitor-name" onClick={() => setExpandedId(expanded ? null : monitor.id)} aria-expanded={expanded}>
           <span>{monitor.name}</span>{expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
         </button>
         <Toggle checked={monitor.enabled} onChange={() => updateMonitor(monitor.id, { enabled: !monitor.enabled })} label={`${monitor.name} 활성화`} />
       </div>
-      <div className="timer-row">
+      <div className="timer-row"><span className="row-field-label">{isRune ? '룬 감지' : monitor.kind === 'exp' ? '알림까지' : '남은 시간'}</span>
         <span className={`timer-digits ${isRune ? 'rune-state' : ''} ${detected || runtime.status === 'warning' || runtime.status === 'expired' ? 'warn' : ''}`}>{digits}</span>
         <span className={`tiny-status ${runtime.status === 'running' || detected || watching ? meta.className : ''}`}><i />{statusLabel}</span>
       </div>
-      <div className="timer-track"><span className={meta.className} style={{ width: `${percentage}%` }} /></div>
-      <div className="monitor-bottom">
-        <button className={`roi-link ${monitor.roi ? 'configured' : ''}`} onClick={() => setEditingId(editingId === monitor.id ? null : monitor.id)}><Crosshair size={14} />{editingId === monitor.id ? '영역 지정 중' : monitor.roi ? '인식 영역 설정됨' : '인식 영역 지정'}</button>
+      <div className="row-rule"><span>{monitor.kind === 'exp' ? '알림 기준' : isRune ? '감지 방식' : '알림 시점'}</span><strong>{monitor.kind === 'exp' ? `${settings.expIdleSec}초 무변동` : isRune ? '마름모 아이콘' : `${monitor.warnBeforeSec}초 전`}</strong></div><div className="timer-track"><span className={meta.className} style={{ width: `${percentage}%` }} /></div>
+      <div className={`monitor-bottom ${stream && monitor.roi && monitor.kind !== 'exp' ? 'with-thumbnail' : ''}`}>
+        <button className={`roi-link ${monitor.roi ? 'configured' : ''}`} onClick={() => { if (stream) setRegionMonitorId(monitor.id); else { setEditingId(monitor.id); notify('화면 공유를 시작한 뒤 영역을 선택해 주세요.'); } }}><Crosshair size={14} />{editingId === monitor.id ? '영역 지정 중' : monitor.roi ? '인식 영역 수정' : monitor.kind === 'rune' ? '미니맵 영역 선택' : monitor.kind === 'exp' ? '경험치 바 영역 선택' : '인식 영역 지정'}</button>
         <span>{isRune ? '색상·모양 · 실험' : monitor.kind === 'exp' ? settings.expDetectionMode === 'visual' ? '숫자 모양 · 실험' : '숫자 OCR · 실험' : '자동 인식 준비 중'}</span>
+        {stream && monitor.roi && monitor.kind !== 'exp' && <RegionThumbnail videoRef={videoRef} roi={monitor.roi} label={`${monitor.name} 감시 영역 미리보기`} />}
       </div>
+      {stream && monitor.roi && monitor.kind === 'exp' && monitor.enabled && <div className="monitor-crop wide-crop"><RegionThumbnail videoRef={videoRef} roi={monitor.roi} label={`${monitor.name} 감시 영역 미리보기`} /></div>}
       {monitor.kind === 'exp' && <div className="experience-reading">
         <span>{settings.expDetectionMode === 'visual' ? '숫자 모양 변화 감시' : experience.observation?.valid ? '현재 경험치' : '마지막 확인 경험치'}</span>
         <strong data-testid="experience-value">{settings.expDetectionMode === 'visual' ? experience.observation?.valid ? '숫자 영역 확인됨' : '--' : experience.value?.display ?? '--'}</strong>
@@ -313,10 +319,10 @@ export default function App() {
       <div className="sidebar-version"><span>MAPLE WATCH</span><span>v0.4.0 BETA</span></div>
     </aside>
     <div className="main-shell">
-      <header className="topbar"><div className="breadcrumb">워크스페이스<ChevronRight size={15} /><strong>대시보드</strong></div><div className="topbar-right"><span className="privacy"><ShieldCheck size={16} />프라이버시 우선</span><span className="topbar-separator" /><button className="icon-button" aria-label="알림 설정 열기" onClick={() => setModal('settings')}><Bell size={20} /></button><span className="avatar">M</span></div></header>
+      <header className="topbar"><div className="breadcrumb"><Leaf size={23} /><strong>메이플 타이머</strong><span className="header-personal">개인용 화면 알림</span></div><div className="topbar-right"><button className="text-button" onClick={() => setModal('guide')}><CircleHelp size={15} /> 사용 가이드</button><span className="privacy"><ShieldCheck size={16} />내 기기에서 분석</span><span className="topbar-separator" /><button className="icon-button" aria-label="알림 설정 열기" onClick={() => setModal('settings')}><Bell size={20} /></button><span className="avatar">M</span></div></header>
       <main>
         <div className="page-heading"><div><div className="eyebrow">A LITTLE HELP, A BETTER HUNT.</div><h1>사냥에만 집중하세요<span>.</span></h1><p>룬부터 버프까지, 놓치기 쉬운 순간을 함께 챙겨요.</p></div><button className="button guide-button" onClick={() => setModal('guide')}><CircleHelp size={17} />처음이신가요?<ArrowRight size={16} /></button></div>
-        <div className="share-toolbar"><div className="share-toolbar-title"><MonitorIcon size={19} /><strong>게임 화면 연결</strong></div><div className="mode-note"><span className={`status-dot ${stream ? 'green' : ''}`} />{stream ? '화면 공유 연결됨 · 로컬 처리 중' : sharingState === 'ended' ? '화면 공유가 종료되었습니다' : '화면 공유 대기 중'}</div></div>
+        <div className="share-toolbar"><div className="share-toolbar-title"><MonitorIcon size={19} /><strong>게임 화면 연결</strong></div><div className="mode-note"><span className={`status-dot ${stream ? 'green' : ''}`} />{stream ? '화면 공유 연결됨 · 로컬 처리 중' : sharingState === 'ended' ? '화면 공유가 종료되었습니다' : '화면 공유 대기 중'}</div><div className="share-actions">{stream ? <button className="button small" onClick={() => { stopSharing(); log('화면 공유를 종료했습니다.'); }}><Square size={14} />공유 종료</button> : <button className="button primary small" onClick={() => void startSharing()} disabled={sharingState === 'requesting'}><MonitorUp size={17} />{sharingState === 'requesting' ? '화면 선택 중…' : '화면 공유 시작'}</button>}</div></div>
         {shareError && <div role="alert" className="error-banner"><MonitorIcon size={18} /><span>{shareError}</span><button className="icon-button" aria-label="공유 오류 닫기" onClick={() => setShareError('')}><X size={18} /></button></div>}
         {!storageOK && <div role="alert" className="error-banner">설정을 저장하지 못했습니다. 브라우저 저장 공간 및 개인정보 보호 설정을 확인해 주세요.</div>}
         <div className="dashboard-grid">
@@ -325,7 +331,7 @@ export default function App() {
               <div className="panel-heading"><div><MonitorIcon size={18} /><h2>화면 미리보기</h2><span className={`badge ${stream ? 'live' : ''}`}>{stream ? 'LIVE' : 'OFFLINE'}</span></div><span className="small-muted">{stream ? '공유 중인 화면' : '연결된 화면 없음'}</span></div>
               <ScreenPreview runeCandidate={runeCandidate} stream={stream} monitors={settings.monitors} editingId={editingId} onSelectMonitor={setEditingId} onRoiChange={setRoi} onVideoReady={(video) => { videoRef.current = video; }} />
               <div className="preview-controls"><div className="preview-state"><span className={`status-dot ${stream ? 'green' : ''}`} /><strong>{stream ? '화면 공유 중' : sharingState === 'ended' ? '공유 종료됨' : '화면 연결 대기'}</strong><span>영상은 서버에 저장되지 않습니다</span></div><div className="preview-buttons">
-                {stream ? <button className="button small" onClick={() => { stopSharing(); log('화면 공유를 종료했습니다.'); }}><Square size={14} />공유 종료</button> : <button className="button primary small" onClick={() => void startSharing()} disabled={sharingState === 'requesting'}><MonitorUp size={17} />{sharingState === 'requesting' ? '화면 선택 중…' : '화면 공유 시작'}</button>}
+
                 <button className={`icon-button ${editingId ? 'highlight' : ''}`} aria-label="인식 영역 편집" onClick={() => setEditingId(editingId ? null : settings.monitors.find((monitor) => monitor.enabled)?.id ?? settings.monitors[0]?.id ?? null)}><Maximize size={18} /></button>
               </div></div>
             </section>
@@ -344,7 +350,7 @@ export default function App() {
               <div className="activity-list" aria-live="polite">{logs.length ? logs.slice(0, 4).map((entry) => <div className="activity-row" key={entry.id}><span className={`log-dot ${entry.tone}`} /><time>{new Date(entry.time).toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><p>{entry.message}</p></div>) : <p className="empty-log">아직 기록이 없습니다. 감지 이벤트가 이곳에 표시됩니다.</p>}</div>
             </section>
           </div>
-          <aside className="modules-column"><div className="modules-heading"><h2>모니터링 모듈 <span>{activeCount}</span></h2><span>각각 독립적으로 작동해요</span></div>{(['rune', 'buff', 'exp', 'booster'] as const).map((kind) => {
+          <aside className="modules-column"><div className="modules-heading"><h2>나의 알림 <span>{activeCount}</span></h2><span>각각 독립적으로 작동해요</span></div>{(['rune', 'exp', 'buff', 'booster'] as const).map((kind) => {
             const meta = moduleMeta[kind];
             const Icon = meta.icon;
             return <section className={`panel module-panel ${meta.className}`} key={kind}><div className="module-heading"><span className={`module-icon ${meta.className}`}><Icon size={20} /></span><div><h3>{meta.title}</h3><p>{meta.sub}</p></div>{kind === 'buff' && <button className="icon-button add-buff" aria-label="새 버프 추가" onClick={addBuff}><Plus size={20} /></button>}</div>{settings.monitors.filter((monitor) => monitor.kind === kind).map(renderMonitor)}{kind === 'buff' && !settings.monitors.some((monitor) => monitor.kind === 'buff') && <button className="button empty-buff" onClick={addBuff}><Plus size={17} />첫 버프 등록하기</button>}</section>;
@@ -353,6 +359,7 @@ export default function App() {
         <footer><span><ShieldCheck size={16} />게임 메모리 접근 없이, 화면만 살펴봅니다.</span><span>나만의 페이스, 나만의 메이플.<Leaf size={15} /></span></footer>
       </main>
     </div>
+    {stream && regionMonitorId && settings.monitors.find(item => item.id === regionMonitorId) && <RegionSelector stream={stream} monitor={settings.monitors.find(item => item.id === regionMonitorId)!} onClose={() => setRegionMonitorId(null)} onApply={roi => { setRoi(regionMonitorId, roi); setRegionMonitorId(null); log('인식 영역을 저장했습니다.', 'success'); }} />}
     {toast && <div className="toast" role="status"><Bell size={18} /><span>{toast}</span><button className="icon-button" aria-label="알림 닫기" onClick={() => setToast('')}><X size={17} /></button></div>}
     {modal && <div className="modal-backdrop" onClick={(event) => { if (event.target === event.currentTarget) setModal(null); }}><Modal title={modal === 'settings' ? '나에게 맞는 알림' : 'Maple Watch 시작하기'} onClose={() => setModal(null)}>
       {modal === 'settings' ? <>

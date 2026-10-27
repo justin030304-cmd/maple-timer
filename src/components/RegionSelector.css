@@ -1,0 +1,29 @@
+.region-backdrop { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; padding: 24px; background: #172a2580; backdrop-filter: blur(3px); }
+.region-dialog { width: min(1280px, 100%); max-height: calc(100dvh - 48px); overflow: auto; background: #fff; border: 1px solid #d6e4dd; border-radius: 14px; box-shadow: 0 24px 100px #10261f45; outline: none; }
+.region-heading { display: flex; justify-content: space-between; align-items: start; padding: 23px 26px 18px; }
+.region-heading span { color: #277259; font-size: 11px; font-weight: 700; letter-spacing: 1px; }
+.region-heading h2 { color: #213f33; font-size: 23px; margin: 6px 0; }
+.region-heading p { color: #65766f; font-size: 14px; line-height: 1.7; }
+.region-tools { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; border-block: 1px solid #e0e9e4; padding: 12px 24px; background: #f8fbf9; }
+.region-tool-group { display: flex; align-items: center; gap: 6px; }
+.region-tools button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 12px; border: 1px solid #d5e3db; border-radius: 7px; background: white; font-size: 13px; color: #52675c; }
+.region-tools button[aria-pressed='true'] { color: white; background: #24765a; border-color: #24765a; }
+.region-tools output { min-width: 55px; text-align: center; color: #315641; font-size: 13px; font-variant-numeric: tabular-nums; }
+.region-help { padding: 9px 24px; color: #6d7d74; background: #f3f8f4; font-size: 12px; line-height: 1.8; }
+.region-viewport { position: relative; height: clamp(220px, 48vh, 580px); overflow: hidden; background: #15211d; touch-action: none; user-select: none; cursor: crosshair; }
+.region-mode-pan { cursor: grab; }
+.region-mode-pan:active { cursor: grabbing; }
+.region-image { position: absolute; left: 50%; top: 50%; }
+.region-image video { display: block; width: 100%; height: 100%; pointer-events: none; }
+.region-selection { position: absolute; border: 2px solid #8fe6bb; background: #5ac5951a; box-shadow: 0 0 0 9999px #0004; }
+.region-selection > span { position: absolute; bottom: calc(100% + 5px); left: -2px; padding: 4px 7px; border-radius: 4px; color: #163c29; background: #dbf4e7; white-space: nowrap; font-size: 11px; }
+.region-handle { position: absolute; width: 12px; height: 12px; background: white; border: 2px solid #287b5d; }
+.region-handle.tl { left: -7px; top: -7px; cursor: nwse-resize; }.region-handle.tr { right: -7px; top: -7px; cursor: nesw-resize; }.region-handle.bl { left: -7px; bottom: -7px; cursor: nesw-resize; }.region-handle.br { right: -7px; bottom: -7px; cursor: nwse-resize; }
+.region-summary { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 15px 24px; border-bottom: 1px solid #e1e9e4; }
+.region-summary strong { color: #335c45; font-size: 14px; }.region-summary p { color: #6d7d73; font-size: 12px; margin-top: 7px; line-height: 1.7; }
+.region-summary canvas { display: block; max-width: 45%; max-height: 100px; object-fit: contain; border: 1px solid #d5e5dc; border-radius: 6px; background: #14211b; }
+.region-summary p.region-error { color: #ad463d; }
+.region-coordinates { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 14px 24px; }.region-coordinates label { color: #5d7366; font-size: 12px; }.region-coordinates input { margin-top: 6px; padding: 8px 10px; }
+.region-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; padding: 15px 24px; margin: 0; border-top: 1px solid #e2eae5; background: #f8fbf9; }
+.region-actions > .text-button { margin-right: auto; }.region-actions > span { font-size: 11px; color: #7c8a81; }
+@media(max-width:650px) { .region-backdrop { padding: 8px; }.region-dialog { max-height: calc(100dvh - 16px); }.region-heading { padding: 16px; }.region-heading h2 { font-size: 19px; }.region-tools,.region-help { padding: 10px 14px; }.region-tools button { padding: 8px; font-size: 12px; }.region-summary { padding: 12px 14px; gap: 10px; }.region-actions { padding: 12px 14px; }.region-actions > span { display: none; }.region-coordinates { padding: 12px 14px; gap: 7px; }.region-coordinates input { font-size: 13px; padding: 8px 5px; } }

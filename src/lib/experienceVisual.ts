@@ -4,23 +4,52 @@ import type { ROI } from '../types'
 const pale = (r: number, g: number, b: number) => Math.min(r, g, b) >= 100 && Math.max(r, g, b) - Math.min(r, g, b) <= 70
 
 /** Locate a bottom lime EXP strip and its nearby pale numeric row. */
-export function locateExperienceRegion(frame: PixelFrame): ROI | null {
+export function locateExperienceRegion(frame: PixelFrame, barHintY?: number): ROI | null {
   const { width, height, data } = frame
   if (data.length !== width * height * 4) return null
   let barY = -1
-  for (let y = height - 1; y >= Math.floor(height * .85); y--) {
+  const hinted = barHintY !== undefined && Number.isFinite(barHintY)
+  const centre = hinted ? Math.round(Math.max(0, Math.min(1, barHintY)) * (height - 1)) : height - 1
+  const radius = Math.max(16, Math.round(height * .035))
+  const startY = hinted ? Math.min(height - 1, centre + radius) : height - 1
+  const endY = hinted ? Math.max(0, centre - radius) : Math.floor(height * .85)
+  let bestDistance = Infinity
+  for (let y = startY; y >= endY; y--) {
     let run = 0
     for (let x = 0; x < width; x++) {
       const i = (y * width + x) * 4
       const r = data[i], g = data[i + 1], b = data[i + 2]
       run = g > 100 && r > 45 && g >= r * .95 && b < g * .5 ? run + 1 : 0
-      if (run >= Math.max(30, width * .025)) { barY = y; break }
+      if (run >= Math.max(30, width * .025)) {
+        if (!hinted || Math.abs(y - centre) < bestDistance) { barY = y; bestDistance = Math.abs(y - centre) }
+        break
+      }
     }
-    if (barY >= 0) break
+    if (barY >= 0 && !hinted) break
   }
   if (barY < 0) return null
-  const top = Math.max(0, barY - Math.max(12, Math.round(height * .018)))
-  const bottom = Math.min(height - 1, barY + Math.max(8, Math.round(height * .012)))
+  let top = Math.max(0, barY - Math.max(16, Math.round(height * .03)))
+  let bottom = Math.min(height - 1, barY + Math.max(16, Math.round(height * .03)))
+  // A click targets the bar's TOP edge, not its bottom. Search both sides,
+  // then isolate the closest text line so HP/MP above it cannot join the ROI.
+  const lines: { top: number; bottom: number; distance: number }[] = []
+  let lineStart = -1
+  for (let y = top; y <= bottom + 1; y++) {
+    let hits = 0
+    if (y <= bottom) for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4
+      if (pale(data[i], data[i + 1], data[i + 2])) hits++
+    }
+    const active = hits >= 3 && hits < width * .65
+    if (active && lineStart < 0) lineStart = y
+    if (!active && lineStart >= 0) {
+      if (y - lineStart >= 5 && y - lineStart <= 60) lines.push({ top: lineStart, bottom: y - 1, distance: Math.max(0, lineStart - barY, barY - (y - 1)) })
+      lineStart = -1
+    }
+  }
+  lines.sort((a, b) => a.distance - b.distance)
+  if (!lines.length) return null
+  top = lines[0].top; bottom = lines[0].bottom
   const columns = new Uint16Array(width)
   for (let y = top; y <= bottom; y++) {
     let hits = 0
@@ -35,10 +64,11 @@ export function locateExperienceRegion(frame: PixelFrame): ROI | null {
     }
   }
   let best: { left: number; right: number; score: number } | null = null
+  const glyphGap = Math.max(8, Math.round((bottom - top) * .9))
   let start = -1, last = -1
   for (let x = 0; x <= width; x++) {
     if (x < width && columns[x] > 0) { if (start < 0) start = x; last = x }
-    if (start >= 0 && (x - last > 8 || x === width)) {
+    if (start >= 0 && (x - last > glyphGap || x === width)) {
       const span = last - start + 1
       if (span >= 45 && span <= width * .55) {
         const score = span / (1 + Math.abs((start + last) / 2 - width / 2) / width * 5)

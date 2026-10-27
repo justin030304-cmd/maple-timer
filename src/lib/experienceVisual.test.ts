@@ -25,3 +25,25 @@ describe('small experience digit shapes', () => {
     expect(locateExperienceRegion(digits([0, 0, 0]))).toBeNull()
   })
 })
+
+describe('experience bar click selection', () => {
+  function floatingBar(): PixelFrame {
+    const width = 640, height = 360, data = new Uint8ClampedArray(width * height * 4)
+    for (let i = 0; i < data.length; i += 4) data.set([25, 30, 27, 255], i)
+    for (let y = 178; y < 191; y++) for (let x = 10; x < 620; x++) data.set([170, 220, 10, 255], (y * width + x) * 4)
+    for (let x = 260; x < 380; x += 8) for (let y = 180; y < 189; y++) for (let dx = 0; dx < 3; dx++) data.set([240, 240, 240, 255], (y * width + x + dx) * 4)
+    return { width, height, data }
+  }
+  it('finds a floating bar near the clicked line rather than assuming screen bottom', () => {
+    const sample = floatingBar()
+    expect(locateExperienceRegion(sample)).toBeNull()
+    const roi = locateExperienceRegion(sample, 178 / 360)
+    expect(roi).not.toBeNull()
+    expect(roi!.y).toBeCloseTo(178 / 360, 2)
+    expect(roi!.width).toBeGreaterThan(.15)
+    expect(roi!.height).toBeLessThan(.06)
+  })
+  it('does not invent a region when the clicked line has no bar', () => {
+    expect(locateExperienceRegion(floatingBar(), .2)).toBeNull()
+  })
+})
