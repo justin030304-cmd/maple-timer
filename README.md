@@ -29,9 +29,7 @@ npm run test:e2e    # Playwright 브라우저 테스트
 
 `.github/workflows/deploy-pages.yml`은 `main` 브랜치에 푸시할 때마다 의존성 설치 → 단위 테스트 → 빌드 → GitHub Pages 배포를 실행합니다. 실패한 테스트나 빌드는 배포되지 않습니다. GitHub의 Actions 화면에서 수동 실행도 가능합니다.
 
-최초 한 번 저장소 **Settings → Pages → Build and deployment → Source**를 **GitHub Actions**로 설정해야 합니다. 이후 Actions의 **Deploy Maple Watch to GitHub Pages** 실행이 성공하면 `github-pages` 배포 항목에서 실제 게시 주소를 확인하세요. 설정 파일이 존재하거나 로컬 빌드가 성공한 것만으로는 사이트가 게시된 상태가 아닙니다.
-
-현재 저장소는 비공개입니다. 비공개 저장소의 GitHub Pages를 지원하는 GitHub 요금제가 필요하며, 사용 중인 요금제에서 지원하지 않으면 다른 배포 서비스를 연결해야 합니다. 배포를 위해 저장소를 임의로 공개로 전환하지 마세요. 비공개 소스 저장소와 게시된 웹사이트의 공개 범위는 별개입니다.
+현재 저장소는 공개이며, **Settings → Pages → Build and deployment → Source**가 **GitHub Actions**로 설정되어 있습니다. 게시 대상 주소는 [https://justin030304-cmd.github.io/maple-timer/](https://justin030304-cmd.github.io/maple-timer/)입니다. Actions의 **Deploy Maple Watch to GitHub Pages** 실행과 `github-pages` 배포가 성공했는지 확인하세요. 설정 파일이 존재하거나 로컬 빌드가 성공한 것만으로는 사이트가 게시된 상태가 아닙니다.
 
 이 대화에서 계속 수정할 때도 같은 저장소의 `main`에 커밋·푸시하면 기존 게시 주소로 새 버전이 배포됩니다. 파일을 로컬에 저장한 순간에는 배포가 시작되지 않으며, 푸시한 커밋을 기준으로 반영됩니다. 자동 배포가 완료된 뒤 사이트를 새로고침해 새 버전을 확인하세요. Vite의 상대 에셋 경로 설정으로 저장소 이름이 포함된 Pages 경로에서도 실행할 수 있습니다.
 
