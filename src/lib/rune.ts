@@ -44,7 +44,7 @@ function colourFlags(red: number, green: number, blue: number, alpha: number, mo
   return 0
 }
 
-/** Find a small cyan + violet/pink diamond inside a user-selected minimap ROI.
+/** Find a small cyan + violet/pink or white-outlined violet diamond inside a user-selected minimap ROI.
  *
  * The red rectangles in the reference are annotations, not part of the icon.
  * Components require narrow tips, wide middle rows, approximate symmetry and a
@@ -112,11 +112,46 @@ export function detectRune(frame: PixelFrame, options: RuneDetectionOptions = DE
         }
       }
     }
-    const markerWidth = right - left + 1, markerHeight = bottom - top + 1
+    let markerWidth = right - left + 1, markerHeight = bottom - top + 1
     if (Math.min(markerWidth, markerHeight) < minimum || Math.max(markerWidth, markerHeight) > maximum || count < 6) continue
     const aspect = markerWidth / markerHeight
     if (aspect < .65 || aspect > 1.5) continue
-    if (options.color !== 'red' && (cyan < 3 || pink < 3 || Math.min(cyan, pink) / count < .06)) continue
+    const mixedPalette = cyan >= 3 && pink >= 3 && Math.min(cyan, pink) / count >= .06
+    let outlinedViolet = false
+    if (options.color !== 'red' && !mixedPalette && pink / count >= .85) {
+      // Some minimap runes have a violet fill and white rim with no cyan.
+      // Require the rim on all four sides; isolated purple map pixels do not qualify.
+      let rimLeft = left, rimRight = right, rimTop = top, rimBottom = bottom
+      let rim = 0, north = false, south = false, west = false, east = false
+      for (let y = Math.max(0, top - 2); y <= Math.min(height - 1, bottom + 2); y++) {
+        for (let x = Math.max(0, left - 2); x <= Math.min(width - 1, right + 2); x++) {
+          const index = y * width + x
+          if (!white[index]) continue
+          let adjacent = false
+          for (let dy = Math.max(0, y - 2); dy <= Math.min(height - 1, y + 2) && !adjacent; dy++) {
+            for (let dx = Math.max(0, x - 2); dx <= Math.min(width - 1, x + 2); dx++) {
+              const neighbour = dy * width + dx
+              if (colours[neighbour] && labels[neighbour] === label) { adjacent = true; break }
+            }
+          }
+          if (!adjacent) continue
+          rim++
+          rimLeft = Math.min(rimLeft, x); rimRight = Math.max(rimRight, x)
+          rimTop = Math.min(rimTop, y); rimBottom = Math.max(rimBottom, y)
+          if (y <= top + markerHeight * .25) north = true
+          if (y >= bottom - markerHeight * .25) south = true
+          if (x <= left + markerWidth * .25) west = true
+          if (x >= right - markerWidth * .25) east = true
+        }
+      }
+      outlinedViolet = rim >= Math.max(6, count * .12) && north && south && west && east
+      if (outlinedViolet) {
+        left = rimLeft; right = rimRight; top = rimTop; bottom = rimBottom
+        markerWidth = right - left + 1; markerHeight = bottom - top + 1
+        if (Math.max(markerWidth, markerHeight) > maximum) continue
+      }
+    }
+    if (options.color !== 'red' && !mixedPalette && !outlinedViolet) continue
 
     const middleX = (left + right) / 2, middleY = (top + bottom) / 2
     let rowError = 0, asymmetry = 0, rowCount = 0, supportCount = 0, outside = 0, centrePixels = 0, centreSupport = 0
@@ -126,8 +161,9 @@ export function detectRune(frame: PixelFrame, options: RuneDetectionOptions = DE
         const index = row * width + column
         let supported = colours[index] !== 0 && labels[index] === label
         if (!supported && white[index]) {
-          for (let y = Math.max(top, row - 1); y <= Math.min(bottom, row + 1) && !supported; y++) {
-            for (let x = Math.max(left, column - 1); x <= Math.min(right, column + 1); x++) {
+          const rimWidth = outlinedViolet ? 2 : 1
+          for (let y = Math.max(top, row - rimWidth); y <= Math.min(bottom, row + rimWidth) && !supported; y++) {
+            for (let x = Math.max(left, column - rimWidth); x <= Math.min(right, column + rimWidth); x++) {
               const neighbour = y * width + x
               if (colours[neighbour] && labels[neighbour] === label) { supported = true; break }
             }
@@ -160,10 +196,12 @@ export function detectRune(frame: PixelFrame, options: RuneDetectionOptions = DE
     if (left === 0 || top === 0 || right === width - 1 || bottom === height - 1) continue
     if (rowCount / markerHeight < .8 || rowError > .18 || asymmetry > .28 || outsideFraction > .16 || centreCoverage < .25) continue
 
+    if (outlinedViolet && (rowError > .14 || outsideFraction > .1 || centreCoverage < .55)) continue
+
     const boundaryScore = clamp(1 - rowError / .32, 0, 1)
     const symmetryScore = clamp(1 - asymmetry * 2, 0, 1)
     const cornerScore = clamp(1 - outsideFraction * 4, 0, 1)
-    const paletteScore = options.color === 'red' ? 1 : clamp(Math.min(cyan, pink) / count / .15, 0, 1)
+    const paletteScore = options.color === 'red' ? 1 : outlinedViolet ? .85 : clamp(Math.min(cyan, pink) / count / .15, 0, 1)
     const centreScore = clamp(centreCoverage / .65, 0, 1)
     const score = clamp(boundaryScore * .55 + symmetryScore * .15 + cornerScore * .1 + paletteScore * .1 + centreScore * .1, 0, 1)
     candidates++

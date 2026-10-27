@@ -223,7 +223,7 @@ export default function App() {
       {expanded && <div className="monitor-settings">
         {monitor.kind === 'buff' && <label>버프 이름<input aria-label="버프 이름" maxLength={40} value={monitor.name} onChange={(event) => updateMonitor(monitor.id, { name: event.target.value })} /></label>}
         {isRune ? <div className="rune-settings">
-          <p>미니맵 부분을 인식 영역으로 지정해 주세요. 설명용 빨간 테두리가 아니라 안쪽의 보라·하늘색 마름모를 찾습니다.</p>
+          <p>미니맵 부분을 인식 영역으로 지정해 주세요. 설명용 빨간 테두리가 아니라 안쪽의 보라·하늘색 또는 흰 테두리의 보라색 마름모를 찾습니다.</p>
           <label>일치 기준 (점)<div className="rune-threshold"><input type="range" aria-label="일치 기준 (점)" min={40} max={95} value={Math.round(settings.runeDetection.minScore * 100)} onChange={(event) => setSettings((current) => ({ ...current, runeDetection: { ...current.runeDetection, minScore: Number(event.target.value) / 100 } }))} /><span>{Math.round(settings.runeDetection.minScore * 100)}점</span></div></label>
           <div className="field-pair">
             <label>아이콘 최소 크기 (px)<input type="number" min={3} max={64} value={settings.runeDetection.minSize} onChange={(event) => {
@@ -310,7 +310,7 @@ export default function App() {
                 <p>공유 화면의 비율로 저장됩니다. 창 크기나 해상도가 바뀌면 영역을 다시 확인해 주세요.</p>
               </div>}
             </section>
-            <div className="recognition-notice"><ShieldCheck size={23} /><div><strong>화면 인식 기능 안내</strong><p>룬은 지정한 미니맵에서 보라·하늘색 마름모를 찾는 실험 감지입니다. 버프·부스터는 준비 중이며, 경험치는 하단 연두색 바의 숫자를 OCR로 읽습니다. 실제 판독값을 확인해 주세요.</p></div></div>
+            <div className="recognition-notice"><ShieldCheck size={23} /><div><strong>화면 인식 기능 안내</strong><p>룬은 지정한 미니맵에서 보라·하늘색 또는 흰 테두리의 보라색 마름모를 찾는 실험 감지입니다. 버프·부스터는 준비 중이며, 경험치는 하단 연두색 바의 숫자를 OCR로 읽습니다. 실제 판독값을 확인해 주세요.</p></div></div>
             <section className="panel activity-panel">
               <div className="panel-heading"><div><AudioLines size={18} /><h2>활동 기록</h2><span className="count-badge">{logs.length}</span></div><button className="text-button" onClick={() => setLogs([])} disabled={!logs.length}>기록 지우기</button></div>
               <div className="activity-list" aria-live="polite">{logs.length ? logs.slice(0, 4).map((entry) => <div className="activity-row" key={entry.id}><span className={`log-dot ${entry.tone}`} /><time>{new Date(entry.time).toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><p>{entry.message}</p></div>) : <p className="empty-log">아직 기록이 없습니다. 감지 이벤트가 이곳에 표시됩니다.</p>}</div>

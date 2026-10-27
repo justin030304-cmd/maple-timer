@@ -104,6 +104,31 @@ describe('experimental minimap diamond recognition', () => {
     }
     expect(detectRune(sample, options).candidate).toBeNull()
   })
+  it.each([4, 6, 9])('accepts a white-outlined violet rune without cyan at radius %i', radius => {
+    const sample = frame()
+    for (let y = -radius; y <= radius; y++) for (let x = -radius; x <= radius; x++) {
+      const distance = Math.abs(x) + Math.abs(y)
+      if (distance <= radius) pixel(sample, 55 + x, 40 + y, distance === radius ? [240, 240, 248] : [174, 83, 227])
+    }
+    expect(detectRune(sample, options).candidate).not.toBeNull()
+  })
+  it('handles a two-pixel white rim around the violet fill', () => {
+    const sample = frame()
+    for (let y = -8; y <= 8; y++) for (let x = -8; x <= 8; x++) {
+      const distance = Math.abs(x) + Math.abs(y)
+      if (distance <= 8) pixel(sample, 55 + x, 40 + y, distance >= 7 ? [245, 245, 251] : [174, 83, 227])
+    }
+    expect(detectRune(sample, options).candidate).not.toBeNull()
+  })
+  it.each(['square', 'circle', 'ring'])('rejects white-outlined violet %s map objects', shape => {
+    const sample = frame()
+    for (let y = -8; y <= 8; y++) for (let x = -8; x <= 8; x++) {
+      const distance = shape === 'square' ? Math.max(Math.abs(x), Math.abs(y)) : Math.hypot(x, y)
+      if (distance > 8 || (shape === 'ring' && distance < 6)) continue
+      pixel(sample, 55 + x, 40 + y, distance >= 7 ? [240, 240, 248] : [174, 83, 227])
+    }
+    expect(detectRune(sample, options).candidate).toBeNull()
+  })
   it('respects size and score requirements', () => {
     const sample = frame()
     diamond(sample, 46, 34)

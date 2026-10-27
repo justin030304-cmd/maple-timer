@@ -157,7 +157,7 @@ async function changeFrame(page: Page, color = '#ffffff') {
 
 
 /** Deliberately synthetic fixtures exercise the pipeline, not game-screenshot accuracy. */
-async function drawRuneFixture(page: Page, kind: 'diamond' | 'outside' | 'square' | 'circle' | 'annotation') {
+async function drawRuneFixture(page: Page, kind: 'diamond' | 'violet' | 'outside' | 'square' | 'circle' | 'annotation') {
   await page.evaluate(kind => {
     const capture = window.__capture!
     const context = capture.canvas.getContext('2d')!
@@ -172,7 +172,7 @@ async function drawRuneFixture(page: Page, kind: 'diamond' | 'outside' | 'square
       for (let y = -8; y <= 8; y++) for (let x = -8; x <= 8; x++) {
         const distance = kind === 'square' ? Math.max(Math.abs(x), Math.abs(y)) : kind === 'circle' ? Math.sqrt(x * x + y * y) : Math.abs(x) + Math.abs(y)
         if (distance > 8) continue
-        context.fillStyle = distance >= 7 ? '#d64adb' : distance >= 6 ? '#f5f5fb' : '#2adde7'
+        context.fillStyle = kind === 'violet' ? distance >= 7 ? '#f5f5fb' : '#ae53e3' : distance >= 7 ? '#d64adb' : distance >= 6 ? '#f5f5fb' : '#2adde7'
         context.fillRect(centerX + x, centerY + y, 1, 1)
       }
     }
@@ -715,4 +715,20 @@ test('EXP reads the numeric row despite dim horizontal bar borders', async ({ pa
   const exp = card(page, '경험치 변화')
   await expect(exp.getByTestId('experience-value')).toHaveText('589,962,353,423,949', { timeout: 25_000 })
   await expect(exp.locator('.tiny-status')).toContainText('숫자 감시 중')
+})
+
+test('Rune white-outlined violet marker without cyan emits one speech alert', async ({ page }) => {
+  await mockCapture(page)
+  await mockSpeech(page)
+  await seedRegions(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: '소리 알림 활성화', exact: true }).click()
+  await beginCapture(page)
+  await drawRuneFixture(page, 'violet')
+  const rune = card(page, '룬')
+  await expect(rune.locator('.timer-digits')).toHaveText('발견')
+  await expect(runeLog(page)).toHaveCount(1)
+  await expect.poll(() => page.evaluate(() => window.__spoken!.filter(item => item.text === '룬 아이콘 후보가 감지되었습니다. 미니맵을 확인해 주세요.').length)).toBe(1)
+  await page.waitForTimeout(1250)
+  await expect(runeLog(page)).toHaveCount(1)
 })
