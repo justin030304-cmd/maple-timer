@@ -5,6 +5,9 @@ export const SETTINGS_KEY = 'maple-timer.settings.v1'
 export const DEFAULT_SETTINGS: Settings = {
   volume: 0.5,
   soundEnabled: true,
+  notificationSound: 'speech',
+  voiceURI: '',
+  speechRate: 1,
   expIdleSec: 60,
   monitors: [
     { id: 'rune', name: '룬', kind: 'rune', enabled: true, roi: null, durationSec: 900, warnBeforeSec: 30 },
@@ -56,6 +59,9 @@ export function loadSettings(storage: StorageLike | null = browserStorage()): Se
     return {
       volume: bounded(saved.volume, defaults.volume, 0, 1),
       soundEnabled: typeof saved.soundEnabled === 'boolean' ? saved.soundEnabled : defaults.soundEnabled,
+      notificationSound: saved.notificationSound === 'chime' ? 'chime' : 'speech',
+      voiceURI: typeof saved.voiceURI === 'string' ? saved.voiceURI.slice(0, 512) : defaults.voiceURI,
+      speechRate: bounded(saved.speechRate, defaults.speechRate, 0.7, 1.3),
       expIdleSec: Math.round(bounded(saved.expIdleSec, defaults.expIdleSec, 5, 3600)),
       monitors,
     }

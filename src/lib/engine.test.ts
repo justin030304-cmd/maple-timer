@@ -6,42 +6,45 @@ import { DEFAULT_SETTINGS, loadSettings, saveSettings, SETTINGS_KEY } from './se
 import type { Monitor } from '../types'
 
 const monitor: Monitor = { id: 'test', name: '테스트', kind: 'buff', enabled: true, roi: { x: 0.125, y: 0.125, width: 0.25, height: 0.25 }, durationSec: 120, warnBeforeSec: 10 }
-const options = { mode: 'demo' as const, expIdleSec: 30 }
+const options = { expIdleSec: 30, hasSource: true, experimentalPixels: true }
+const expMonitor: Monitor = { ...monitor, kind: 'exp' }
 
 describe('timers and honest detection states', () => {
-  it('counts from an event timestamp, without accumulating interval drift', () => {
-    expect(timerRuntime(monitor, 1000, 62500, options)).toMatchObject({ status: 'running', remainingSec: 58.5 })
+  it('counts actual pixel observation timestamps without accumulating interval drift', () => {
+    expect(timerRuntime(expMonitor, 1000, 12500, options)).toMatchObject({ status: 'running', remainingSec: 18.5 })
   })
-  it('warns before expiry and expires at zero', () => {
-    expect(timerRuntime(monitor, 1000, 111000, options).status).toBe('warning')
-    expect(timerRuntime(monitor, 1000, 122000, options)).toMatchObject({ status: 'expired', remainingSec: 0 })
+  it('does not issue a premature warning and expires only at the inactivity threshold', () => {
+    expect(timerRuntime(expMonitor, 1000, 29000, options).status).toBe('running')
+    expect(timerRuntime(expMonitor, 1000, 31000, options)).toMatchObject({ status: 'expired', remainingSec: 0 })
   })
   it('never lets disabled modules alert', () => {
-    expect(timerRuntime({ ...monitor, enabled: false }, 1000, 999999, options).status).toBe('disabled')
+    expect(timerRuntime({ ...expMonitor, enabled: false }, 1000, 999999, options).status).toBe('disabled')
   })
-  it('uses the experience inactivity setting and resets on a new event', () => {
-    const exp = { ...monitor, kind: 'exp' as const }
-    expect(timerRuntime(exp, 1000, 29000, options).status).toBe('running')
-    expect(timerRuntime(exp, 1000, 32000, options).status).toBe('expired')
-    expect(timerRuntime(exp, 32000, 32000, options).remainingSec).toBe(30)
+  it('uses the configured inactivity duration and resets on a new observation', () => {
+    expect(timerRuntime(expMonitor, 1000, 32000, options).status).toBe('expired')
+    expect(timerRuntime(expMonitor, 32000, 32000, options).remainingSec).toBe(30)
+    expect(timerRuntime(expMonitor, 1000, 12000, { ...options, expIdleSec: 10 }).status).toBe('expired')
   })
-  it('requires a source and a region in live mode', () => {
-    expect(timerRuntime(monitor, null, 0, { ...options, mode: 'live' }).status).toBe('waiting')
-    expect(timerRuntime({ ...monitor, roi: null }, null, 0, { ...options, mode: 'live', hasSource: true }).status).toBe('unconfigured')
+  it('requires a shared source and a region before any timer can run', () => {
+    expect(timerRuntime(expMonitor, 1000, 999999, { ...options, hasSource: false }).status).toBe('waiting')
+    expect(timerRuntime({ ...expMonitor, roi: null }, 1000, 999999, options).status).toBe('unconfigured')
+    expect(createRuntime(monitor).status).toBe('waiting')
   })
-  it('does not pretend to recognize real icons', () => {
-    expect(timerRuntime(monitor, 1000, 999999, { ...options, mode: 'live', hasSource: true }).status).toBe('no-sample')
+  it('does not treat remembered timestamps as real rune, buff, or booster detections', () => {
+    for (const kind of ['rune', 'buff', 'booster'] as const) {
+      expect(timerRuntime({ ...monitor, kind }, 1000, 999999, options).status).toBe('no-sample')
+    }
   })
   it('requires explicit opt-in for experimental experience pixel monitoring', () => {
-    const exp = { ...monitor, kind: 'exp' as const }
-    const live = { ...options, mode: 'live' as const, hasSource: true }
-    expect(timerRuntime(exp, 1000, 32000, live).status).toBe('no-sample')
-    expect(timerRuntime(exp, 1000, 32000, { ...live, experimentalPixels: true })).toMatchObject({ status: 'expired', detail: expect.stringContaining('경험치 OCR 아님') })
-    expect(timerRuntime(monitor, 1000, 999999, { ...live, experimentalPixels: true }).status).toBe('no-sample')
+    expect(timerRuntime(expMonitor, 1000, 32000, { ...options, experimentalPixels: false }).status).toBe('no-sample')
+    expect(timerRuntime(expMonitor, 1000, 32000, options)).toMatchObject({ status: 'expired', detail: expect.stringContaining('경험치 OCR 아님') })
   })
-  it('surfaces frame failures and empty event state', () => {
-    expect(timerRuntime(monitor, null, 0, { ...options, frameError: '읽기 실패' })).toMatchObject({ status: 'error', detail: '읽기 실패' })
-    expect(createRuntime(monitor).status).toBe('waiting')
+  it('waits for an actual first frame rather than synthesizing a detection', () => {
+    expect(timerRuntime(expMonitor, null, 999999, options)).toMatchObject({ status: 'waiting', lastEventAt: null })
+  })
+  it('surfaces frame failures without producing an alert and stops after sharing ends', () => {
+    expect(timerRuntime(expMonitor, 1000, 999999, { ...options, frameError: '읽기 실패' })).toMatchObject({ status: 'error', detail: '읽기 실패' })
+    expect(timerRuntime(expMonitor, 1000, 999999, { ...options, hasSource: false, frameError: '읽기 실패' }).status).toBe('waiting')
   })
   it('formats negative and nonfinite times safely', () => {
     expect(formatTime(60.2)).toBe('01:01')
@@ -75,6 +78,18 @@ function memoryStorage(initial = '') {
 }
 
 describe('persistent settings', () => {
+  it('migrates existing version-one preferences without resetting monitors or regions', () => {
+    const previous = { volume: 0.2, soundEnabled: false, expIdleSec: 45, monitors: [{ ...monitor, id: 'custom-buff' }, ...DEFAULT_SETTINGS.monitors.filter(item => item.kind !== 'buff')] }
+    const storage = memoryStorage(JSON.stringify({ version: 1, settings: previous }))
+    const loaded = loadSettings(storage)
+    expect(loaded).toMatchObject({ ...previous, voiceURI: '', speechRate: 1, notificationSound: 'speech' })
+    expect(loaded.monitors[0].roi).toEqual(monitor.roi)
+  })
+  it('preserves the selected speech voice and bounds invalid speech preferences', () => {
+    const storage = memoryStorage(JSON.stringify({ version: 1, settings: { voiceURI: 'Microsoft SunHi Korean', speechRate: 9, notificationSound: 'invalid', monitors: DEFAULT_SETTINGS.monitors } }))
+    const loaded = loadSettings(storage)
+    expect(loaded).toMatchObject({ voiceURI: 'Microsoft SunHi Korean', speechRate: 1.3, notificationSound: 'speech' })
+  })
   it('roundtrips settings and custom buffs', () => {
     const storage = memoryStorage()
     const settings = { ...DEFAULT_SETTINGS, volume: 0.3, monitors: [...DEFAULT_SETTINGS.monitors, { ...monitor, id: 'custom-buff' }] }

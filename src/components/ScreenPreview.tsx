@@ -1,18 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import type { Monitor, ROI } from '../types'
-import { DemoScene } from './DemoScene'
 import './ScreenPreview.css'
 
 export interface ScreenPreviewProps {
-  mode: 'demo' | 'live'
   stream: MediaStream | null
   monitors: Monitor[]
   editingId: string | null
   onSelectMonitor: (id: string | null) => void
   onRoiChange: (id: string, roi: ROI) => void
   onVideoReady?: (video: HTMLVideoElement | null) => void
-  demoRunning: boolean
 }
 
 type DragState = {
@@ -24,10 +21,10 @@ type DragState = {
   original: ROI | null
 }
 
-const colorByKind = { rune: '#ad9aeb', buff: '#d4af72', exp: '#9ac8aa', booster: '#9dbbce' }
+const colorByKind = { rune: '#7962ad', buff: '#a16c21', exp: '#257b56', booster: '#3c7298' }
 const clamp = (value: number, min = 0, max = 1) => Math.max(min, Math.min(max, value))
 
-export function ScreenPreview({ mode, stream, monitors, editingId, onSelectMonitor, onRoiChange, onVideoReady, demoRunning }: ScreenPreviewProps) {
+export function ScreenPreview({ stream, monitors, editingId, onSelectMonitor, onRoiChange, onVideoReady }: ScreenPreviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const onVideoReadyRef = useRef(onVideoReady)
@@ -41,7 +38,7 @@ export function ScreenPreview({ mode, stream, monitors, editingId, onSelectMonit
   useEffect(() => {
     const video = videoRef.current
     setVideoError(false)
-    if (!video || mode !== 'live') return
+    if (!video) return
     video.srcObject = stream
     if (stream) video.play().catch(() => setVideoError(true))
     onVideoReadyRef.current?.(video)
@@ -49,12 +46,12 @@ export function ScreenPreview({ mode, stream, monitors, editingId, onSelectMonit
       video.srcObject = null
       onVideoReadyRef.current?.(null)
     }
-  }, [stream, mode])
+  }, [stream])
 
   useEffect(() => {
     dragRef.current = null
     setDraft(null)
-  }, [editingId, mode, stream])
+  }, [editingId, stream])
 
   function point(event: ReactPointerEvent<HTMLDivElement>) {
     const rect = event.currentTarget.getBoundingClientRect()
@@ -62,7 +59,7 @@ export function ScreenPreview({ mode, stream, monitors, editingId, onSelectMonit
   }
 
   function beginDrag(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!selected || event.button !== 0 || (mode === 'live' && !stream)) return
+    if (!selected || event.button !== 0 || !stream) return
     const { x, y } = point(event)
     const roi = selected.roi
     const inside = roi && x >= roi.x && y >= roi.y && x <= roi.x + roi.width && y <= roi.y + roi.height
@@ -97,8 +94,8 @@ export function ScreenPreview({ mode, stream, monitors, editingId, onSelectMonit
     <div className="screen-preview-wrap">
       <div
         ref={stageRef}
-        className={`screen-preview ${selected ? 'is-editing' : ''} ${mode === 'live' && !stream ? 'is-empty' : ''}`}
-        style={{ aspectRatio: mode === 'demo' ? 16 / 9 : aspectRatio }}
+        className={`screen-preview ${selected ? 'is-editing' : ''} ${!stream ? 'is-empty' : ''}`}
+        style={{ aspectRatio: stream ? aspectRatio : 16 / 9 }}
         role="group"
         aria-label={selected ? `${selected.name} 인식 영역 편집. 마우스로 드래그하거나 방향키로 영역을 이동하세요.` : '화면 미리보기'}
         tabIndex={selected ? 0 : -1}
@@ -115,7 +112,6 @@ export function ScreenPreview({ mode, stream, monitors, editingId, onSelectMonit
           onRoiChange(selected.id, { ...roi, x: clamp(roi.x + (event.key === 'ArrowRight' ? step : event.key === 'ArrowLeft' ? -step : 0), 0, 1 - roi.width), y: clamp(roi.y + (event.key === 'ArrowDown' ? step : event.key === 'ArrowUp' ? -step : 0), 0, 1 - roi.height) })
         }}
       >
-        {mode === 'demo' ? <DemoScene running={demoRunning} /> : <>
           <video ref={videoRef} className="screen-video" muted autoPlay playsInline onLoadedMetadata={() => {
             const video = videoRef.current
             if (video && video.videoWidth && video.videoHeight) setAspectRatio(video.videoWidth / video.videoHeight)
@@ -125,9 +121,8 @@ export function ScreenPreview({ mode, stream, monitors, editingId, onSelectMonit
           }} onError={() => setVideoError(true)} />
           {!stream && <div className="preview-empty"><div className="preview-empty-icon"><svg width="34" height="34" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="13" rx="2" stroke="currentColor" strokeWidth="1.4" /><path d="M8 21h8m-4-4v4m-3-11 3-3 3 3m-3-3v7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg></div><strong>함께 볼 화면을 선택해 주세요</strong><p>화면 공유 시작 버튼으로 게임 창 또는 화면을 연결하세요.</p><span>Chrome · 화면 영상은 기기 밖으로 전송되지 않습니다</span></div>}
           {stream && videoError && <div className="preview-empty"><strong>화면 영상을 재생할 수 없습니다</strong><p>화면 공유를 종료한 뒤 다시 연결해 주세요.</p></div>}
-        </>}
 
-        {(mode === 'demo' || stream) && monitors.map(monitor => {
+        {stream && monitors.map(monitor => {
           const isSelected = monitor.id === editingId
           const roi = isSelected && draft ? draft : monitor.roi
           if (!roi || (!monitor.enabled && !isSelected)) return null
@@ -137,7 +132,7 @@ export function ScreenPreview({ mode, stream, monitors, editingId, onSelectMonit
           </div>
         })}
 
-        {selected && (mode === 'demo' || stream) && <div className="roi-instruction"><span className="roi-crosshair">⌖</span><strong>{selected.name}</strong><span>드래그하여 영역 지정 · 영역 안에서 이동</span><button onPointerDown={event => event.stopPropagation()} onClick={() => onSelectMonitor(null)} aria-label="영역 편집 완료">완료 ✓</button></div>}
+        {selected && stream && <div className="roi-instruction"><span className="roi-crosshair">⌖</span><strong>{selected.name}</strong><span>드래그하여 영역 지정 · 영역 안에서 이동</span><button onPointerDown={event => event.stopPropagation()} onClick={() => onSelectMonitor(null)} aria-label="영역 편집 완료">완료 ✓</button></div>}
       </div>
     </div>
   )

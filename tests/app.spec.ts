@@ -2,10 +2,15 @@ import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import { DEFAULT_SETTINGS, SETTINGS_KEY } from '../src/lib/settings'
 
+type SpokenAlert = { text: string; voiceURI: string | null; volume: number; rate: number }
+
 declare global {
   interface Window {
     __capture?: { canvas: HTMLCanvasElement; stream: MediaStream; track: MediaStreamTrack & { requestFrame?: () => void } }
     __captureOptions?: DisplayMediaStreamOptions
+    __spoken?: SpokenAlert[]
+    __cancelCount?: number
+    __loadSpeechVoices?: () => void
   }
 }
 
@@ -28,6 +33,61 @@ async function mockCapture(page: Page) {
   })
 }
 
+/** A deterministic browser speech engine: tests verify utterances, never claim speaker output. */
+async function mockSpeech(page: Page, delayedVoices = false, stalledPlayback = false) {
+  await page.addInitScript(({ delayed, stalled }) => {
+    const voices = [
+      { name: 'Microsoft SunHi - Korean (Korea)', lang: 'ko-KR', voiceURI: 'uri-sunhi', localService: true, default: true },
+      { name: 'Microsoft InJoon - Korean (Korea)', lang: 'ko-KR', voiceURI: 'uri-injoon', localService: true, default: false },
+      { name: 'English voice', lang: 'en-US', voiceURI: 'uri-english', localService: true, default: false },
+    ]
+    let available = delayed ? [] : voices
+    window.__spoken = []
+    window.__cancelCount = 0
+    class MockUtterance extends EventTarget {
+      text: string
+      lang = ''
+      voice: typeof voices[number] | null = null
+      volume = 1
+      rate = 1
+      pitch = 1
+      onend: ((event: Event) => void) | null = null
+      onerror: ((event: Event) => void) | null = null
+      onstart: ((event: Event) => void) | null = null
+      constructor(text = '') { super(); this.text = text }
+    }
+    const synthesis = Object.assign(new EventTarget(), {
+      speaking: false,
+      pending: false,
+      paused: false,
+      onvoiceschanged: null as ((event: Event) => void) | null,
+      getVoices: () => available,
+      speak: (utterance: MockUtterance) => {
+        window.__spoken!.push({ text: utterance.text, voiceURI: utterance.voice?.voiceURI ?? null, volume: utterance.volume, rate: utterance.rate })
+        synthesis.speaking = true
+        if (stalled) return
+        const start = new Event('start')
+        utterance.dispatchEvent(start); utterance.onstart?.(start)
+        setTimeout(() => {
+          synthesis.speaking = false
+          const end = new Event('end')
+          utterance.dispatchEvent(end); utterance.onend?.(end)
+        }, 20)
+      },
+      cancel: () => { window.__cancelCount! += 1; synthesis.speaking = false; synthesis.pending = false },
+      pause: () => { synthesis.paused = true },
+      resume: () => { synthesis.paused = false },
+    })
+    window.__loadSpeechVoices = () => {
+      available = voices
+      const event = new Event('voiceschanged')
+      synthesis.dispatchEvent(event); synthesis.onvoiceschanged?.(event)
+    }
+    Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: synthesis })
+    Object.defineProperty(window, 'SpeechSynthesisUtterance', { configurable: true, value: MockUtterance })
+  }, { delayed: delayedVoices, stalled: stalledPlayback })
+}
+
 async function seedRegions(page: Page, expIdleSec = 5) {
   await page.addInitScript(({ key, settings }) => {
     localStorage.setItem(key, JSON.stringify({ version: 1, settings }))
@@ -35,29 +95,36 @@ async function seedRegions(page: Page, expIdleSec = 5) {
 }
 
 async function beginCapture(page: Page) {
-  await page.getByRole('button', { name: '실제 화면', exact: true }).click()
   await page.getByRole('button', { name: '화면 공유 시작', exact: true }).click()
   await expect(page.getByText('화면 공유 중', { exact: true })).toBeVisible()
   await expect.poll(() => page.locator('video').evaluate(video => (video as HTMLVideoElement).readyState)).toBeGreaterThanOrEqual(2)
 }
 
-test('demo timers run, pause without advancing, and resume', async ({ page }) => {
+async function changeFrame(page: Page, color = '#ffffff') {
+  await page.evaluate(color => {
+    const capture = window.__capture!
+    const context = capture.canvas.getContext('2d')!
+    context.fillStyle = color; context.fillRect(0, 0, 1280, 720)
+    capture.track.requestFrame?.()
+  }, color)
+}
+
+test('opens the real sharing workspace without demo controls or invented timers', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByRole('heading', { name: '사냥에만 집중하세요.' })).toBeVisible()
-  await expect(page.getByText('실제 감지 결과가 아닙니다')).toBeVisible()
-  const timer = card(page, '룬').locator('.timer-digits')
-  const initial = await timer.innerText()
-  await expect.poll(() => timer.innerText()).not.toBe(initial)
-  await page.getByRole('button', { name: '데모 일시정지', exact: true }).click()
-  const paused = await timer.innerText()
-  await page.waitForTimeout(1300)
-  await expect(timer).toHaveText(paused)
-  await page.getByRole('button', { name: '데모 재생', exact: true }).click()
-  await expect.poll(() => timer.innerText()).not.toBe(paused)
+  await expect(page.getByRole('button', { name: '화면 공유 시작', exact: true })).toBeVisible()
+  await expect(page.getByText(/데모|가상/)).toHaveCount(0)
+  await expect(card(page, '룬').locator('.timer-digits')).toHaveText('--:--')
+  await expect(card(page, '경험치 변화').locator('.timer-digits')).toHaveText('--:--')
+  await page.waitForTimeout(1100)
+  await expect(card(page, '룬').locator('.timer-digits')).toHaveText('--:--')
+  await expect(page.getByRole('button', { name: '데모 일시정지', exact: true })).toHaveCount(0)
 })
 
-test('draws source-relative ROI, moves it by keyboard, and persists across reload', async ({ page }) => {
+test('draws source-relative ROI on a real stream, moves it by keyboard, and persists across reload', async ({ page }) => {
+  await mockCapture(page)
   await page.goto('/')
+  await beginCapture(page)
   await page.locator('.roi-chips').getByRole('button', { name: '룬', exact: true }).click()
   const stage = page.getByRole('group', { name: /룬 인식 영역 편집/ })
   const box = (await stage.boundingBox())!
@@ -74,8 +141,9 @@ test('draws source-relative ROI, moves it by keyboard, and persists across reloa
   expect((await stored(page)).monitors[0].roi.x).toBeCloseTo(.21, 2)
   await page.reload()
   await expect(card(page, '룬').getByRole('button', { name: '인식 영역 설정됨' })).toBeVisible()
-  await expect(page.locator('.roi-region')).toHaveCount(1)
   expect((await stored(page)).monitors[0].roi.width).toBeCloseTo(.4, 2)
+  await beginCapture(page)
+  await expect(page.locator('.roi-region')).toHaveCount(1)
 })
 
 test('independent module toggles survive reload', async ({ page }) => {
@@ -88,15 +156,15 @@ test('independent module toggles survive reload', async ({ page }) => {
   await expect(page.getByRole('switch', { name: '경험치 변화 활성화', exact: true })).toBeChecked()
 })
 
-test('adds, configures, resets, and removes a custom buff', async ({ page }) => {
+test('adds, configures, and removes a custom buff without synthetic detection', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('button', { name: '새 버프 추가', exact: true }).click()
   await page.getByRole('textbox', { name: '버프 이름', exact: true }).fill('테스트 버프')
   const buff = card(page, '테스트 버프')
   await buff.getByRole('spinbutton', { name: '지속 시간 (초)', exact: true }).fill('120')
   await buff.getByRole('spinbutton', { name: '미리 알림 (초)', exact: true }).fill('15')
-  await buff.getByRole('button', { name: '가상 감지', exact: true }).click()
-  await expect(buff.locator('.timer-digits')).toHaveText(/0[12]:\d{2}/)
+  await expect(buff.locator('.timer-digits')).toHaveText('--:--')
+  await expect(page.getByRole('button', { name: '가상 감지', exact: true })).toHaveCount(0)
   await page.reload()
   await buff.getByRole('button', { name: '테스트 버프', exact: true }).click()
   await expect(buff.getByRole('spinbutton', { name: '지속 시간 (초)', exact: true })).toHaveValue('120')
@@ -106,19 +174,87 @@ test('adds, configures, resets, and removes a custom buff', async ({ page }) => 
   await expect(card(page, '테스트 버프')).toHaveCount(0)
 })
 
-test('saves sound preferences and allows an explicit audio test', async ({ page }) => {
+test('prefers a Korean female voice and preserves voice, speed, volume, and mute choices', async ({ page }) => {
+  await mockSpeech(page)
   await page.goto('/')
   await page.getByRole('button', { name: '알림 설정 열기', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: '나에게 맞는 알림' })
-  await dialog.getByRole('switch', { name: '소리 알림 활성화', exact: true }).click()
+  await expect(dialog.getByRole('combobox', { name: '알림 방식', exact: true })).toHaveValue('speech')
   await dialog.getByRole('slider', { name: '알림 음량', exact: true }).fill('0.24')
+  await dialog.getByRole('slider', { name: '말하기 속도', exact: true }).fill('0.9')
   await dialog.getByRole('button', { name: '알림 소리 테스트', exact: true }).click()
-  await expect(dialog.getByText('소리 사용 준비 완료')).toBeVisible()
+  await expect.poll(() => page.evaluate(() => window.__spoken!.length)).toBe(1)
+  expect(await page.evaluate(() => window.__spoken![0])).toMatchObject({ voiceURI: 'uri-sunhi', volume: .24, rate: .9 })
+  await dialog.getByRole('combobox', { name: '알림 음성', exact: true }).selectOption('uri-injoon')
+  await dialog.getByRole('button', { name: '알림 소리 테스트', exact: true }).click()
+  await expect.poll(() => page.evaluate(() => window.__spoken!.length)).toBe(2)
+  expect(await page.evaluate(() => window.__spoken![1].voiceURI)).toBe('uri-injoon')
+  await dialog.getByRole('switch', { name: '소리 알림 활성화', exact: true }).click()
   await page.reload()
   await page.getByRole('button', { name: '알림 설정 열기', exact: true }).click()
   await expect(dialog.getByRole('switch', { name: '소리 알림 활성화', exact: true })).not.toBeChecked()
   await expect(dialog.getByRole('slider', { name: '알림 음량', exact: true })).toHaveValue('0.24')
-  expect((await stored(page)).volume).toBe(.24)
+  await expect(dialog.getByRole('slider', { name: '말하기 속도', exact: true })).toHaveValue('0.9')
+  await expect(dialog.getByRole('combobox', { name: '알림 음성', exact: true })).toHaveValue('uri-injoon')
+  expect(await stored(page)).toMatchObject({ volume: .24, speechRate: .9, voiceURI: 'uri-injoon', soundEnabled: false })
+})
+
+test('refreshes the voice list after delayed browser voice discovery', async ({ page }) => {
+  await mockSpeech(page, true)
+  await page.goto('/')
+  await page.getByRole('button', { name: '알림 설정 열기', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.getByRole('option', { name: /Microsoft SunHi/ })).toHaveCount(0)
+  await page.evaluate(() => window.__loadSpeechVoices!())
+  await expect(dialog.getByRole('option', { name: /Microsoft SunHi/ })).toHaveCount(1)
+  await dialog.getByRole('button', { name: '알림 소리 테스트', exact: true }).click()
+  await expect.poll(() => page.evaluate(() => window.__spoken!.length)).toBe(1)
+  expect(await page.evaluate(() => window.__spoken![0].voiceURI)).toBe('uri-sunhi')
+})
+
+test('missing Korean voices fall back to a usable chime without changing the saved speech choice', async ({ page }) => {
+  await mockSpeech(page, true)
+  await page.goto('/')
+  await page.getByRole('button', { name: '알림 설정 열기', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '나에게 맞는 알림' })
+  await dialog.getByRole('button', { name: '알림 소리 테스트', exact: true }).click()
+  await expect(dialog.getByRole('status')).toContainText('사용 가능한 한국어 음성이 없습니다.')
+  await expect(dialog.getByText('소리 사용 준비 완료', { exact: true })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: '알림 소리 테스트', exact: true })).toBeEnabled()
+  await expect(page.locator('.audio-dock').getByRole('button', { name: '소리 끄기', exact: true })).toContainText('기본 알림음')
+  expect(await page.evaluate(() => window.__spoken!.length)).toBe(0)
+  expect((await stored(page)).notificationSound).toBe('speech')
+})
+
+test('stalled speech falls back after its watchdog and muting cancels a later pending timeout', async ({ page }) => {
+  await mockSpeech(page, false, true)
+  await page.goto('/')
+  await page.getByRole('button', { name: '알림 설정 열기', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '나에게 맞는 알림' })
+  await dialog.getByRole('button', { name: '알림 소리 테스트', exact: true }).click()
+  await expect(dialog.getByRole('button', { name: '음성 재생 대기 중…', exact: true })).toBeDisabled()
+  expect(await page.evaluate(() => window.__spoken!.length)).toBe(1)
+  const cancelBeforeWatchdog = await page.evaluate(() => window.__cancelCount!)
+  await expect(dialog.getByRole('status')).toContainText('음성 알림이 시작되지 않았습니다.', { timeout: 12_000 })
+  await expect(dialog.getByRole('button', { name: '알림 소리 테스트', exact: true })).toBeEnabled()
+  await expect(dialog.getByText('소리 사용 준비 완료', { exact: true })).toBeVisible()
+  await expect(page.locator('.audio-dock').getByRole('button', { name: '소리 끄기', exact: true })).toContainText('기본 알림음')
+  expect(await page.evaluate(() => window.__cancelCount!)).toBeGreaterThan(cancelBeforeWatchdog)
+
+  // Voice discovery clears the old error; a later cancelled request must not revive it.
+  await page.evaluate(() => window.__loadSpeechVoices!())
+  await expect(dialog.getByRole('status')).toHaveCount(0)
+  await dialog.getByRole('button', { name: '알림 소리 테스트', exact: true }).click()
+  await expect(dialog.getByRole('button', { name: '음성 재생 대기 중…', exact: true })).toBeDisabled()
+  expect(await page.evaluate(() => window.__spoken!.length)).toBe(2)
+  await dialog.getByRole('switch', { name: '소리 알림 활성화', exact: true }).click()
+  await expect(dialog.getByRole('button', { name: '알림 소리 테스트', exact: true })).toBeEnabled()
+  const cancelAfterMute = await page.evaluate(() => window.__cancelCount!)
+  await page.waitForTimeout(8500)
+  await expect(dialog.getByRole('status')).toHaveCount(0)
+  await expect(page.locator('.audio-dock').getByRole('button', { name: '소리 켜기', exact: true })).toContainText('음소거')
+  expect(await page.evaluate(() => window.__cancelCount!)).toBe(cancelAfterMute)
+  expect((await stored(page)).soundEnabled).toBe(false)
 })
 
 test('shows a real local canvas stream without pretending to recognize icons, and handles browser stop', async ({ page }) => {
@@ -145,29 +281,31 @@ test('shows a real local canvas stream without pretending to recognize icons, an
   expect(requests.filter(request => request.method !== 'GET' || request.body !== null || new URL(request.url).hostname !== '127.0.0.1')).toEqual([])
 })
 
-test('experimental pixel inactivity alerts once, resets after a frame change, and stops on sharing stop', async ({ page }) => {
+test('pixel inactivity alerts once, speaks the event after activation, resets, and stops with sharing', async ({ page }) => {
   const uploads: string[] = []
   page.on('request', request => { if (request.method() !== 'GET' || request.postData() !== null) uploads.push(request.url()) })
   await mockCapture(page)
+  await mockSpeech(page)
   await seedRegions(page, 5)
   await page.goto('/')
   await beginCapture(page)
+  await page.getByRole('button', { name: '소리 알림 활성화', exact: true }).click()
+  await expect.poll(() => page.evaluate(() => window.__spoken!.length)).toBe(1)
   const exp = card(page, '경험치 변화')
   await exp.getByRole('button', { name: '경험치 변화', exact: true }).click()
   await exp.getByRole('checkbox', { name: '실험용 픽셀 변화 감시 켜기', exact: true }).check()
   await expect(exp.locator('.timer-digits')).toHaveText(/^00:0[1-5]$/)
   await expect(exp.getByText('알림 발생', { exact: true })).toBeVisible({ timeout: 9000 })
-  await expect(page.getByRole('status')).toContainText('[픽셀 감시] 경험치 변화')
-  const log = page.locator('.activity-row').filter({ hasText: '[픽셀 감시] 경험치 변화' })
+  await expect(page.getByRole('status')).toContainText('경험치 영역에 5초 동안 픽셀 변화가 없습니다.')
+  const log = page.locator('.activity-row').filter({ hasText: '경험치 영역에 5초 동안 픽셀 변화가 없습니다.' })
   await expect(log).toHaveCount(1)
+  await expect.poll(() => page.evaluate(() => window.__spoken!.length)).toBe(2)
+  expect(await page.evaluate(() => window.__spoken![1])).toMatchObject({ voiceURI: 'uri-sunhi' })
+  expect(await page.evaluate(() => window.__spoken![1].text)).toContain('경험치')
   await page.waitForTimeout(1200)
   await expect(log).toHaveCount(1)
-  await page.evaluate(() => {
-    const capture = window.__capture!
-    const context = capture.canvas.getContext('2d')!
-    context.fillStyle = '#ffffff'; context.fillRect(0, 0, 1280, 720)
-    capture.track.requestFrame?.()
-  })
+  expect(await page.evaluate(() => window.__spoken!.length)).toBe(2)
+  await changeFrame(page)
   await expect(exp.locator('.timer-digits')).toHaveText(/^00:0[1-5]$/)
   await page.getByRole('button', { name: '공유 종료', exact: true }).click()
   await expect(page.getByText('공유 종료됨', { exact: true })).toBeVisible()
@@ -175,7 +313,37 @@ test('experimental pixel inactivity alerts once, resets after a frame change, an
   await page.waitForTimeout(6000)
   await expect(log).toHaveCount(0)
   await expect(exp.locator('.timer-digits')).toHaveText('--:--')
+  expect(await page.evaluate(() => window.__spoken!.length)).toBe(2)
   expect(uploads).toEqual([])
+})
+
+test('inactivity stays visible without speaking before user audio activation', async ({ page }) => {
+  await mockCapture(page)
+  await mockSpeech(page)
+  await seedRegions(page, 5)
+  await page.goto('/')
+  await beginCapture(page)
+  const exp = card(page, '경험치 변화')
+  await exp.getByRole('button', { name: '경험치 변화', exact: true }).click()
+  await exp.getByRole('checkbox', { name: '실험용 픽셀 변화 감시 켜기', exact: true }).check()
+  await expect(exp.getByText('알림 발생', { exact: true })).toBeVisible({ timeout: 9000 })
+  expect(await page.evaluate(() => window.__spoken!.length)).toBe(0)
+})
+
+test('muted speech keeps visible inactivity alerts without synthesizing announcements', async ({ page }) => {
+  await mockCapture(page)
+  await mockSpeech(page)
+  await seedRegions(page, 5)
+  await page.goto('/')
+  await page.getByRole('button', { name: '소리 알림 활성화', exact: true }).click()
+  await expect.poll(() => page.evaluate(() => window.__spoken!.length)).toBe(1)
+  await page.getByRole('button', { name: '소리 끄기', exact: true }).click()
+  await beginCapture(page)
+  const exp = card(page, '경험치 변화')
+  await exp.getByRole('button', { name: '경험치 변화', exact: true }).click()
+  await exp.getByRole('checkbox', { name: '실험용 픽셀 변화 감시 켜기', exact: true }).check()
+  await expect(exp.getByText('알림 발생', { exact: true })).toBeVisible({ timeout: 9000 })
+  expect(await page.evaluate(() => window.__spoken!.length)).toBe(1)
 })
 
 test('canvas analysis failures are visible and do not become successful detections', async ({ page }) => {
@@ -204,7 +372,6 @@ test('canvas analysis failures are visible and do not become successful detectio
 test('permission denial produces a clear recoverable message', async ({ page }) => {
   await page.addInitScript(() => Object.defineProperty(navigator.mediaDevices, 'getDisplayMedia', { value: async () => { throw new DOMException('Denied', 'NotAllowedError') } }))
   await page.goto('/')
-  await page.getByRole('button', { name: '실제 화면', exact: true }).click()
   await page.getByRole('button', { name: '화면 공유 시작', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('공유가 취소되었거나 권한이 허용되지 않았습니다')
   await expect(page.getByRole('button', { name: '화면 공유 시작', exact: true })).toBeEnabled()
@@ -228,9 +395,14 @@ test('settings modal traps focus, closes by Escape, and restores the trigger', a
   await expect(trigger).toBeFocused()
 })
 
-test('mobile dashboard has no horizontal overflow', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 })
+test('light theme uses readable type without desktop or mobile horizontal overflow', async ({ page }) => {
   await page.goto('/')
+  const colors = await page.evaluate(() => ({ background: getComputedStyle(document.documentElement).backgroundColor, bodySize: parseFloat(getComputedStyle(document.body).fontSize) }))
+  const channels = colors.background.match(/\d+/g)!.map(Number)
+  expect(channels.slice(0, 3).every(value => value >= 240)).toBe(true)
+  expect(colors.bodySize).toBeGreaterThanOrEqual(15)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await page.setViewportSize({ width: 390, height: 844 })
   await expect(page.getByRole('heading', { name: '사냥에만 집중하세요.' })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   await page.getByRole('button', { name: '알림 설정 열기', exact: true }).click()

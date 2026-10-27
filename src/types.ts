@@ -1,5 +1,4 @@
 export type ModuleKind = 'rune' | 'buff' | 'exp' | 'booster'
-export type Mode = 'demo' | 'live'
 
 /** Coordinates are fractions of the original shared image, never CSS pixels. */
 export interface ROI {
@@ -22,6 +21,9 @@ export interface Monitor {
 export interface Settings {
   volume: number
   soundEnabled: boolean
+  notificationSound: 'speech' | 'chime'
+  voiceURI: string
+  speechRate: number
   expIdleSec: number
   monitors: Monitor[]
 }
