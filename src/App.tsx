@@ -56,7 +56,7 @@ export default function App() {
     setLogs((previous) => [{ id: eventId.current++, time: Date.now(), message, tone }, ...previous].slice(0, 30));
   }, []);
   const notify = useCallback((message: string) => { setToast(message); }, []);
-  const { voices, audioReady, voiceError, testing, preview, speakAlert, stop: stopAudio } = useNotificationAudio(settings, notify);
+  const { voices, audioReady, voiceError, testing, prepare: prepareAudio, preview, speakAlert, stop: stopAudio } = useNotificationAudio(settings, notify);
   const selectedVoice = selectVoice(voices, settings.voiceURI);
   const missingSavedVoice = !!settings.voiceURI && !voices.some((voice) => voice.voiceURI === settings.voiceURI);
 
@@ -94,6 +94,7 @@ export default function App() {
     }
     setSharingState('requesting');
     setShareError('');
+    void prepareAudio();
     try {
       const captured = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 10, max: 15 } }, audio: false });
       if (!mounted.current) { captured.getTracks().forEach((track) => track.stop()); return; }
@@ -422,7 +423,7 @@ export default function App() {
           <li><span>01</span><div><strong>화면 공유하기</strong><p>‘화면 공유 시작’을 눌러 게임 창이나 화면을 선택하세요. HTTPS 또는 localhost가 필요하며, 게임 창을 최소화하면 프레임이 멈출 수 있어요.</p></div></li>
           <li><span>02</span><div><strong>모듈별 인식 영역 지정하기</strong><p>룬 영역은 미니맵 부분에 좁게 맞춰 주세요. 화면 전체를 지정하면 작은 아이콘을 놓칠 수 있습니다. 영역 안을 드래그해 이동하거나 수치로 정밀하게 수정할 수 있습니다.</p></div></li>
           <li><span>03</span><div><strong>경험치 숫자 영역 지정하기</strong><p>하단 연두색 바의 흰 경험치 숫자를 포함해 주세요. 작은 글자는 숫자 모양 감시를 사용하고, OCR 모드에서는 판독값을 확인하세요. 변화 없음 경고 시간을 설정하세요. 읽기 실패 중에는 알림을 울리지 않습니다.</p></div></li>
-          <li><span>04</span><div><strong>알림 목소리 선택하기</strong><p>알림 설정에서 한국어 여성 음성을 선택하고 테스트 버튼을 눌러 주세요. 룬은 미니맵 마름모 아이콘을 실험적으로 감지하며, 비약·유니온의 부는 버프 영역에서 샘플 기반으로 감지하고, 부스터는 상단 중앙 남은시간 박스를 감지합니다.</p></div></li>
+          <li><span>04</span><div><strong>알림 목소리 선택하기</strong><p>화면 공유 시작 시 알림 소리도 함께 준비됩니다. 알림 설정에서 한국어 여성 음성을 선택하고 원하면 테스트로 확인하세요. 룬은 미니맵 마름모 아이콘을 실험적으로 감지하며, 비약·유니온의 부는 버프 영역에서 샘플 기반으로 감지하고, 부스터는 상단 중앙 남은시간 박스를 감지합니다.</p></div></li>
         </ol>
         <div className="setting-note"><ShieldCheck size={23} /><p>영상은 브라우저 메모리에서만 처리합니다. 게임 메모리 접근, 자동 키 입력, 게임 조작 기능은 없습니다.</p></div>
       </>}

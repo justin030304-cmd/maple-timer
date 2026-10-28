@@ -1210,3 +1210,51 @@ test('recorded covered potion survives row reordering without inventing union or
   await expect(page.locator('.activity-row').filter({hasText:'곧 종료됩니다.'})).toHaveCount(0)
   await page.getByRole('button',{name:'공유 종료',exact:true}).click()
 })
+
+for(const sound of ['speech','dingdong'] as const){
+  test(`sharing silently activates ${sound} alerts without a separate sound button`,async({page})=>{
+    await mockCapture(page);await mockSpeech(page);await trackBellNotes(page)
+    await seedRegions(page)
+    await page.addInitScript(({key,sound})=>{
+      const saved=JSON.parse(localStorage.getItem(key)!)
+      saved.settings.monitors=saved.settings.monitors.map((m:{kind:string})=>({...m,enabled:m.kind==='rune',audio:{sound,volume:1,voiceURI:'',speechText:'룬 떳어요'}}))
+      localStorage.setItem(key,JSON.stringify(saved))
+      const resume=AudioContext.prototype.resume
+      ;(window as unknown as {audioPreparationGestures:boolean[]}).audioPreparationGestures=[]
+      AudioContext.prototype.resume=function(){
+        ;(window as unknown as {audioPreparationGestures:boolean[]}).audioPreparationGestures.push(navigator.userActivation.isActive)
+        return resume.call(this)
+      }
+    },{key:SETTINGS_KEY,sound})
+    await page.goto('/')
+    await beginCapture(page)
+    await expect(page.getByRole('button',{name:'소리 끄기',exact:true})).toBeVisible()
+    expect(await page.evaluate(()=>(window as unknown as {audioPreparationGestures:boolean[]}).audioPreparationGestures)).toEqual([true])
+    expect(await page.evaluate(()=>window.__spoken)).toEqual([])
+    expect(await page.evaluate(()=>window.__tones)).toEqual([])
+    await drawRuneFixture(page,'diamond')
+    await expect(runeLog(page)).toHaveCount(1)
+    if(sound==='speech')await expect.poll(()=>page.evaluate(()=>window.__spoken!.map(u=>u.text))).toEqual(['룬 떳어요'])
+    else {
+      await expect.poll(()=>page.evaluate(()=>window.__tones)).toEqual([880,1760,659.25,1318.5])
+      expect(await page.evaluate(()=>window.__spoken)).toEqual([])
+    }
+    await page.getByRole('button',{name:'공유 종료',exact:true}).click()
+  })
+}
+
+test('sharing preserves a saved mute setting while preparing audio',async({page})=>{
+  await mockCapture(page);await mockSpeech(page);await trackBellNotes(page);await seedRegions(page)
+  await page.addInitScript(key=>{
+    const saved=JSON.parse(localStorage.getItem(key)!);saved.settings.soundEnabled=false;localStorage.setItem(key,JSON.stringify(saved))
+  },SETTINGS_KEY)
+  await page.goto('/')
+  await beginCapture(page)
+  await expect(page.getByRole('button',{name:'소리 켜기',exact:true})).toBeVisible()
+  await drawRuneFixture(page,'diamond')
+  await expect(runeLog(page)).toHaveCount(1)
+  await page.waitForTimeout(1400)
+  expect(await page.evaluate(()=>window.__spoken)).toEqual([])
+  expect(await page.evaluate(()=>window.__tones)).toEqual([])
+  expect((await stored(page)).soundEnabled).toBe(false)
+})

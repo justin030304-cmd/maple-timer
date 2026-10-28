@@ -62,6 +62,23 @@ export function useNotificationAudio(settings: Settings, notify: (message: strin
   }, [settings.soundEnabled, stop]);
   useEffect(() => { stop(); }, [settings.notificationSound, settings.voiceURI, stop]);
 
+  // Call from the share button before awaiting the browser's screen picker.
+  // Resume silently so starting a session does not play a test notification.
+  const prepare = useCallback(async () => {
+    try {
+      const context = contextRef.current ?? new AudioContext();
+      contextRef.current = context;
+      await context.resume();
+      if (!mounted.current || context.state !== 'running') return false;
+      unlocked.current = true;
+      setAudioReady(true);
+      return true;
+    } catch {
+      if (mounted.current) notify('알림 소리를 준비하지 못했습니다. 아래 소리 활성화 버튼으로 다시 시도해 주세요.');
+      return false;
+    }
+  }, [notify]);
+
   const chime = useCallback(async (kind: 'chime' | 'dingdong' = 'chime', volume = settingsRef.current.volume) => {
     const epoch = audioEpoch.current;
     try {
@@ -139,5 +156,5 @@ export function useNotificationAudio(settings: Settings, notify: (message: strin
   }, [speak, stop]);
 
   const speakAlert = useCallback((message: string, monitor?: Monitor) => speak(message, false, monitor), [speak]);
-  return { voices, audioReady, voiceError, testing, preview, speakAlert, stop };
+  return { voices, audioReady, voiceError, testing, prepare, preview, speakAlert, stop };
 }
