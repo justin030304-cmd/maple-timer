@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { RefObject } from 'react'
 import type { Monitor } from '../types'
 import type { ExpObservation } from '../lib/engine'
-import { experienceGlyphs, glyphDifference } from '../lib/experienceVisual'
+import { experienceGlyphs, experienceGlyphsChanged } from '../lib/experienceVisual'
 import type { GlyphSample } from '../lib/experienceVisual'
 
 export function useExperienceVisual(stream: MediaStream | null, videoRef: RefObject<HTMLVideoElement | null>, monitor: Monitor | undefined, retry: number) {
@@ -13,11 +13,11 @@ export function useExperienceVisual(stream: MediaStream | null, videoRef: RefObj
     if (!stream || !monitor?.enabled || !roi) return
     const canvas = document.createElement('canvas')
     const context = canvas.getContext('2d', { willReadFrequently: true })
-    let baseline: GlyphSample | null = null, lastChangedAt: number | null = null, confirmed = false
+    let baseline: GlyphSample | null = null, lastChangedAt: number | null = null, confirmed = false, pendingChange = false
     let lastSampleAt = 0
     const sample = () => {
       const now = Date.now()
-      if (lastSampleAt && now - lastSampleAt > 4000) { baseline = null; lastChangedAt = null; confirmed = false }
+      if (lastSampleAt && now - lastSampleAt > 4000) { baseline = null; lastChangedAt = null; confirmed = false; pendingChange = false }
       lastSampleAt = now
       let sourcePreview: string | null = null
       try {
@@ -31,14 +31,18 @@ export function useExperienceVisual(stream: MediaStream | null, videoRef: RefObj
         const glyphs = experienceGlyphs(context.getImageData(0, 0, canvas.width, canvas.height))
         if (!baseline) { baseline = glyphs; lastChangedAt = now }
         else {
-          const changed = glyphDifference(baseline, glyphs) > .08
-          if (changed) { baseline = glyphs; lastChangedAt = now }
-          // Two valid frames establish that visible digit strokes can be tracked.
-          confirmed = true
+          const changed = experienceGlyphsChanged(baseline, glyphs)
+          if (changed && !pendingChange) {
+            // A possible change suppresses expiry while the next frame checks it.
+            pendingChange = true; confirmed = false
+          } else {
+            if (changed) { baseline = glyphs; lastChangedAt = now }
+            pendingChange = false; confirmed = true
+          }
         }
         setView({ sourcePreview, observation: { value: '숫자 모양 확인됨', valid: confirmed, confirming: !confirmed, lastChangedAt, lastReadAt: now } })
       } catch (error) {
-        baseline = null; lastChangedAt = null; confirmed = false
+        baseline = null; lastChangedAt = null; confirmed = false; pendingChange = false
         setView({ sourcePreview, observation: { value: null, valid: false, lastChangedAt: null, lastReadAt: null, error: error instanceof Error ? error.message : '경험치 숫자 모양을 확인하지 못했습니다.' } })
       }
     }

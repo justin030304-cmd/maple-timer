@@ -1258,3 +1258,26 @@ test('sharing preserves a saved mute setting while preparing audio',async({page}
   expect(await page.evaluate(()=>window.__tones)).toEqual([])
   expect((await stored(page)).soundEnabled).toBe(false)
 })
+
+test('a single changed EXP digit resets visual inactivity before expiry without a percentage change',async({page})=>{
+  test.setTimeout(25000)
+  await mockCapture(page);await mockSpeech(page)
+  await page.addInitScript(({key,settings})=>localStorage.setItem(key,JSON.stringify({version:1,settings})),{key:SETTINGS_KEY,settings:{...DEFAULT_SETTINGS,expDetectionMode:'visual',expIdleSec:5,monitors:DEFAULT_SETTINGS.monitors.map(m=>({...m,enabled:m.kind==='exp',roi:m.kind==='exp'?{x:.1,y:.17,width:370/1280,height:26/720}:null}))}})
+  await page.goto('/')
+  await beginCapture(page)
+  const draw=async(n:number)=>page.evaluate(async n=>{
+    const image=new Image();image.src='/tests/fixtures/experience-single-digit.png';await image.decode()
+    const capture=window.__capture!,ctx=capture.canvas.getContext('2d')!
+    ctx.drawImage(image,0,n*26,370,26,128,122.4,370,26);capture.track.requestFrame?.()
+  },n)
+  await draw(0)
+  const exp=card(page,'경험치 변화')
+  await expect(exp.locator('.tiny-status')).toContainText('숫자 감시 중')
+  await page.waitForTimeout(3000)
+  await draw(1)
+  await expect(exp.locator('.timer-digits')).toHaveText(/^00:0[45]$/)
+  await page.waitForTimeout(1400)
+  await expect(experienceLog(page)).toHaveCount(0)
+  await expect(experienceLog(page)).toHaveCount(1,{timeout:6000})
+  await page.getByRole('button',{name:'공유 종료',exact:true}).click()
+})

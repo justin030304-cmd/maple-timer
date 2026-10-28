@@ -100,11 +100,18 @@ export function experienceGlyphs(frame: PixelFrame): GlyphSample {
   const { width, height, data } = frame
   if (width < 30 || height < 5 || height > 80 || width > 4096 || data.length !== width * height * 4) throw new Error('경험치 숫자 한 줄만 포함하도록 영역을 지정해 주세요.')
   const mask = new Uint8Array(width * height)
+  // Compression changes dark antialias pixels much more than the pale strokes.
+  // Retain support for dim captures while using a steadier core on bright text.
+  let brightest = 0
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] >= 160 && pale(data[i], data[i + 1], data[i + 2])) brightest = Math.max(brightest, Math.min(data[i], data[i + 1], data[i + 2]))
+  }
+  const threshold = Math.max(100, Math.min(140, brightest * .75))
   for (let y = 0; y < height; y++) {
     let start = -1
     for (let x = 0; x <= width; x++) {
       const i = y * width + x, offset = i * 4
-      const foreground = x < width && data[offset + 3] >= 160 && pale(data[offset], data[offset + 1], data[offset + 2])
+      const foreground = x < width && data[offset + 3] >= 160 && Math.min(data[offset], data[offset + 1], data[offset + 2]) >= threshold && pale(data[offset], data[offset + 1], data[offset + 2])
       if (foreground) { mask[i] = 1; if (start < 0) start = x }
       else if (start >= 0) { if (x - start > width * .65) mask.fill(0, y * width + start, i); start = -1 }
     }
@@ -125,4 +132,25 @@ export function glyphDifference(a: GlyphSample, b: GlyphSample): number {
   let changed = 0
   for (let i = 0; i < a.mask.length; i++) changed += Math.abs(a.mask[i] - b.mask[i])
   return changed / Math.max(a.ink, b.ink, 1)
+}
+
+/** A single changing digit must not be diluted by the many unchanged digits. */
+export function experienceGlyphsChanged(a: GlyphSample, b: GlyphSample): boolean {
+  if (glyphDifference(a, b) > .08) return true
+  let top = a.height, bottom = -1
+  const changes = new Uint16Array(a.width), inkA = new Uint16Array(a.width), inkB = new Uint16Array(a.width)
+  for (let y = 0; y < a.height; y++) for (let x = 0; x < a.width; x++) {
+    const index = y * a.width + x, before = a.mask[index], after = b.mask[index]
+    changes[x] += Math.abs(before - after); inkA[x] += before; inkB[x] += after
+    if (before || after) { top = Math.min(top, y); bottom = Math.max(bottom, y) }
+  }
+  const span = Math.max(5, bottom - top + 1), window = Math.min(a.width, span)
+  let changed = 0, before = 0, after = 0
+  for (let x = 0; x < a.width; x++) {
+    changed += changes[x]; before += inkA[x]; after += inkB[x]
+    if (x >= window) { changed -= changes[x - window]; before -= inkA[x - window]; after -= inkB[x - window] }
+    const strokes = Math.max(before, after)
+    if (x >= window - 1 && strokes >= 12 && changed >= Math.max(4, Math.ceil(span * .35)) && changed / strokes > .12) return true
+  }
+  return false
 }

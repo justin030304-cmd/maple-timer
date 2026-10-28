@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { experienceGlyphs, glyphDifference, locateExperienceRegion } from './experienceVisual'
+import { experienceGlyphs, experienceGlyphsChanged, glyphDifference, locateExperienceRegion } from './experienceVisual'
 import type { PixelFrame } from './analysis'
 function digits(background = [90, 160, 10]): PixelFrame {
   const width = 120, height = 20, data = new Uint8ClampedArray(width * height * 4)
@@ -20,6 +20,21 @@ describe('small experience digit shapes', () => {
     const a = digits(); a.data.fill(0)
     expect(() => experienceGlyphs(a)).toThrow()
     expect(() => experienceGlyphs({ ...a, height: 100 })).toThrow()
+  })
+  it('detects a small stroke change diluted by a long unchanged number', () => {
+    const a = digits(), b = digits()
+    for (let y = 5; y < 10; y++) b.data.set([90, 160, 10, 255], (y * b.width + 8) * 4)
+    const before = experienceGlyphs(a), after = experienceGlyphs(b)
+    expect(glyphDifference(before, after)).toBeLessThan(.08)
+    expect(experienceGlyphsChanged(before, after)).toBe(true)
+  })
+  it('ignores isolated noise pixels and retains dim digit strokes', () => {
+    const a = digits(), b = digits()
+    b.data.set([90, 160, 10, 255], (5 * b.width + 8) * 4)
+    b.data.set([90, 160, 10, 255], (6 * b.width + 8) * 4)
+    expect(experienceGlyphsChanged(experienceGlyphs(a), experienceGlyphs(b))).toBe(false)
+    for (let i = 0; i < a.data.length; i += 4) if (a.data[i] === 230) a.data.set([130, 130, 135, 255], i)
+    expect(experienceGlyphs(a).ink).toBe(experienceGlyphs(digits()).ink)
   })
   it('does not invent an automatic region without a lime experience strip', () => {
     expect(locateExperienceRegion(digits([0, 0, 0]))).toBeNull()
