@@ -1,7 +1,7 @@
 import type { ModuleKind, Monitor, MonitorAudio, Settings } from '../types'
 
 export function defaultMonitorAudio(kind: ModuleKind): MonitorAudio {
-  return { sound: kind === 'rune' ? 'speech' : kind === 'exp' ? 'dingdong' : 'inherit', volume: 1, voiceURI: '', speechText: kind === 'rune' ? '룬 떳어요' : '' }
+  return { sound: kind === 'rune' ? 'speech' : kind === 'exp' ? 'dingdong' : 'inherit', volume: 1, voiceURI: '', speechText: kind === 'rune' ? '룬 떳어요' : kind === 'buff' ? '버프 끝나가요' : '' }
 }
 export function readMonitorAudio(value: unknown, kind: ModuleKind): MonitorAudio {
   const defaults = defaultMonitorAudio(kind)
@@ -17,10 +17,11 @@ export function readMonitorAudio(value: unknown, kind: ModuleKind): MonitorAudio
 export function resolveMonitorAudio(settings: Settings, message: string, monitor?: Monitor) {
   const audio = monitor ? readMonitorAudio(monitor.audio, monitor.kind) : null
   const inherited = !audio || audio.sound === 'inherit'
+  const text = monitor?.kind === 'buff' ? '버프 끝나가요' : message
   return {
     sound: inherited ? settings.notificationSound : audio.sound,
     volume: settings.volume * (audio?.volume ?? 1),
     voiceURI: inherited ? settings.voiceURI : audio.voiceURI,
-    text: inherited ? message : audio.speechText.trim() || message,
+    text: inherited ? text : audio.speechText.trim() || text,
   }
 }

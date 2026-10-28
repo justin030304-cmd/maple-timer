@@ -384,7 +384,7 @@ export default function App() {
               <div className="activity-list" aria-live="polite">{logs.length ? logs.slice(0, 4).map((entry) => <div className="activity-row" key={entry.id}><span className={`log-dot ${entry.tone}`} /><time>{new Date(entry.time).toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><p>{entry.message}</p></div>) : <p className="empty-log">아직 기록이 없습니다. 감지 이벤트가 이곳에 표시됩니다.</p>}</div>
             </section>
           </div>
-          <aside className="modules-column"><div className="modules-heading"><h2>나의 알림 <span>{activeCount}</span></h2><span>각각 독립적으로 작동해요</span></div>{(['countdown', 'rune', 'exp', 'buff'] as const).map((kind) => {
+          <aside className="modules-column"><div className="modules-heading"><h2>나의 알림 <span>{activeCount}</span></h2><span>각각 독립적으로 작동해요</span></div>{(['rune', 'exp', 'buff', 'countdown'] as const).map((kind) => {
             const meta = moduleMeta[kind];
             const Icon = meta.icon;
             return <section className={`panel module-panel ${meta.className}`} key={kind}><div className="module-heading"><span className={`module-icon ${meta.className}`}><Icon size={20} /></span><div><h3>{meta.title}</h3><p>{meta.sub}</p></div>{kind === 'buff' && !(['potion','union-wealth'] as const).every(target=>settings.monitors.some(m=>m.buffTarget===target)) && <button className="button small" onClick={registerTargetBuffs}>비약·유니온의 부 등록</button>}</div>{settings.monitors.filter((monitor) => monitor.kind === kind).map(renderMonitor)}</section>;

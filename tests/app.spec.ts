@@ -1061,7 +1061,7 @@ test('two tracked buffs group into one ten-second alert and losing the shared so
   await expect(union.locator('.timer-digits')).toHaveText(/^00:/,{timeout:15000})
   const grouped=page.locator('.activity-row').filter({hasText:'비약, 유니온의 부 곧 종료됩니다.'})
   await expect(grouped).toHaveCount(1,{timeout:15000})
-  await expect.poll(()=>page.evaluate(()=>window.__spoken!.filter(item=>item.text==='비약, 유니온의 부 곧 종료됩니다.').length)).toBe(1)
+  await expect.poll(()=>page.evaluate(()=>window.__spoken!.filter(item=>item.text==='버프 끝나가요').length)).toBe(1)
   await page.waitForTimeout(2500)
   await expect(grouped).toHaveCount(1)
   await page.getByRole('button',{name:'공유 종료',exact:true}).click()
