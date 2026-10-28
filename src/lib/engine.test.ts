@@ -124,7 +124,7 @@ describe('persistent settings', () => {
     const previous = { volume: 0.2, soundEnabled: false, expIdleSec: 45, monitors: [{ ...monitor, id: 'custom-buff', buffTarget: 'potion' as const }, ...DEFAULT_SETTINGS.monitors.filter(item => item.kind !== 'buff')] }
     const storage = memoryStorage(JSON.stringify({ version: 1, settings: previous }))
     const loaded = loadSettings(storage)
-    expect(loaded).toMatchObject({ ...previous, voiceURI: '', speechRate: 1, notificationSound: 'speech', runeDetection: { minSize: 5, maxSize: 36, minScore: 0.7 } })
+    expect(loaded).toMatchObject({ ...previous, volume: 1, voiceURI: '', speechRate: 1, notificationSound: 'speech', runeDetection: { minSize: 5, maxSize: 36, minScore: 0.7 } })
     expect(loaded.monitors[0].roi).toEqual(monitor.roi)
   })
   it('preserves the selected speech voice and bounds invalid speech preferences', () => {
@@ -163,6 +163,21 @@ describe('persistent settings', () => {
     expect(loaded.monitors.some(m=>m.kind==='booster'||(m.kind==='buff'&&!m.buffTarget))).toBe(false)
     saveSettings(loaded,storage)
     expect(loadSettings(storage)).toEqual(loaded)
+  })
+  it('raises the old master volume once and preserves later adjustments', () => {
+    const storage=memoryStorage(JSON.stringify({version:1,settings:{...DEFAULT_SETTINGS,volume:.35}}))
+    const louder=loadSettings(storage)
+    expect(louder.volume).toBe(1)
+    saveSettings({...louder,volume:.24},storage)
+    expect(loadSettings(storage).volume).toBe(.24)
+  })
+  it('preserves explicit silence and individual monitor levels when increasing volume', () => {
+    const individual={...DEFAULT_SETTINGS.monitors[0],audio:{sound:'speech' as const,volume:.35,voiceURI:'saved',speechText:'사용자 문구'}}
+    const load=(volume:number)=>loadSettings(memoryStorage(JSON.stringify({version:1,settings:{...DEFAULT_SETTINGS,volume,soundEnabled:false,monitors:[individual,...DEFAULT_SETTINGS.monitors.slice(1)]}})))
+    expect(load(0).volume).toBe(0)
+    const louder=load(.5)
+    expect(louder.soundEnabled).toBe(false)
+    expect(louder.monitors[0].audio).toEqual(individual.audio)
   })
   it('recovers from corrupted and version-mismatched storage', () => {
     expect(loadSettings(memoryStorage('{'))).toEqual(DEFAULT_SETTINGS)

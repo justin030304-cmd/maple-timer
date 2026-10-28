@@ -4,7 +4,7 @@ import { normalizeROI } from './roi'
 
 export const SETTINGS_KEY = 'maple-timer.settings.v1'
 export const DEFAULT_SETTINGS: Settings = {
-  volume: 0.5,
+  volume: 1,
   soundEnabled: true,
   notificationSound: 'speech',
   voiceURI: '',
@@ -73,7 +73,9 @@ export function loadSettings(storage: StorageLike | null = browserStorage()): Se
       if (!monitors.some(monitor => monitor.kind === core.kind)) monitors.push(core)
     }
     return {
-      volume: bounded(saved.volume, defaults.volume, 0, 1),
+      // Apply the louder master level once; preserve explicit zero/mute and
+      // every volume the user chooses after this update.
+      volume: raw.audioVolumeVersion === 1 || saved.volume === 0 ? bounded(saved.volume, defaults.volume, 0, 1) : 1,
       soundEnabled: typeof saved.soundEnabled === 'boolean' ? saved.soundEnabled : defaults.soundEnabled,
       notificationSound: saved.notificationSound === 'chime' ? 'chime' : 'speech',
       voiceURI: typeof saved.voiceURI === 'string' ? saved.voiceURI.slice(0, 512) : defaults.voiceURI,
@@ -90,7 +92,7 @@ export function loadSettings(storage: StorageLike | null = browserStorage()): Se
 export function saveSettings(settings: Settings, storage: StorageLike | null = browserStorage()): boolean {
   try {
     if (!storage) return false
-    storage.setItem(SETTINGS_KEY, JSON.stringify({ version: 1, settings }))
+    storage.setItem(SETTINGS_KEY, JSON.stringify({ version: 1, audioVolumeVersion: 1, settings }))
     return true
   } catch { return false }
 }

@@ -10,6 +10,7 @@ export function useNotificationAudio(settings: Settings, notify: (message: strin
   const [testing, setTesting] = useState(false);
   const speechRef = useRef<SpeechNotifier | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
+  const outputRef = useRef<DynamicsCompressorNode | null>(null);
   const unlocked = useRef(false);
   const audioEpoch = useRef(0);
   const oscillators = useRef(new Set<OscillatorNode>());
@@ -53,6 +54,7 @@ export function useNotificationAudio(settings: Settings, notify: (message: strin
       speechRef.current = null;
       void contextRef.current?.close();
       contextRef.current = null;
+      outputRef.current = null;
     };
   }, []);
 
@@ -71,6 +73,14 @@ export function useNotificationAudio(settings: Settings, notify: (message: strin
       unlocked.current = true;
       setAudioReady(true);
       if (volume === 0) return true;
+      // Share headroom between overlapping alert tones at the louder level.
+      if (!outputRef.current) {
+        const output = context.createDynamicsCompressor();
+        output.threshold.value = -3; output.knee.value = 3; output.ratio.value = 12;
+        output.attack.value = .002; output.release.value = .15;
+        output.connect(context.destination); outputRef.current = output;
+      }
+      const output = outputRef.current;
       const start = context.currentTime;
       const frequencies = kind === 'dingdong' ? [880, 659.25] : [659.25, 880, 987.77];
       frequencies.forEach((frequency, index) => {
@@ -81,9 +91,9 @@ export function useNotificationAudio(settings: Settings, notify: (message: strin
           const oscillator = context.createOscillator(), gain = context.createGain();
           oscillator.type = 'sine'; oscillator.frequency.value = frequency * partial;
           gain.gain.setValueAtTime(0, at);
-          gain.gain.linearRampToValueAtTime(Math.max(.0001, volume * (partial === 1 ? .2 : .04)), at + .012);
+          gain.gain.linearRampToValueAtTime(Math.max(.0001, volume * (partial === 1 ? .55 : .11)), at + .012);
           gain.gain.exponentialRampToValueAtTime(.0001, at + duration - .01);
-          oscillator.connect(gain); gain.connect(context.destination);
+          oscillator.connect(gain); gain.connect(output);
           oscillators.current.add(oscillator);
           oscillator.start(at); oscillator.stop(at + duration);
           oscillator.onended = () => { oscillators.current.delete(oscillator); oscillator.disconnect(); gain.disconnect(); };
