@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import type { Monitor } from '../types'
-import { advanceBuffClock, BUFF_NAMES, clusterBuffAlerts, emptyBuffClock, verifyBuffEdges, recognizeBuffDigits } from '../lib/buffs'
-import type { BuffClock, BuffMatch } from '../lib/buffs'
+import { advanceBuffClock, BUFF_NAMES, clusterBuffAlerts, emptyBuffClock, verifyBuffEdges, recognizeBuffTime } from '../lib/buffs'
+import type { BuffClock, BuffMatch, BuffTimeReading } from '../lib/buffs'
 import { BUFF_DIGIT_MODEL } from '../lib/buffDigitModel'
 import templateURL from '../assets/buff-targets.png'
-export interface BuffObservation { clock:BuffClock; detail:string; score:number|null; number:number|null; candidate:BuffMatch|null; loading?:boolean; error?:string }
+export interface BuffObservation { clock:BuffClock; detail:string; score:number|null; number:number|null; candidate:BuffMatch|null; time?:BuffTimeReading|null; loading?:boolean; error?:string }
 
 export function useBuffDetection({stream,videoRef,monitors,onAlert}:{stream:MediaStream|null;videoRef:RefObject<HTMLVideoElement|null>;monitors:Monitor[];onAlert:(monitors:Monitor[])=>void}){
   const [observations,setObservations]=useState<Record<string,BuffObservation>>({})
@@ -54,14 +54,14 @@ export function useBuffDetection({stream,videoRef,monitors,onAlert}:{stream:Medi
             found=frame.matches.find(match=>match.target===monitor.buffTarget)
           }
           positions[monitor.id]=found
-          let number:number|null=null,detail=found?'아이콘 확인 · 초 단위 숫자 대기':'대상 아이콘을 찾는 중'
+          let number:number|null=null,time:BuffTimeReading|null=null,detail=found?'아이콘 확인 · 초 단위 숫자 대기':'대상 아이콘을 찾는 중'
           if(found){
-            const result=recognizeBuffDigits(image,found,BUFF_DIGIT_MODEL)
-            if(result){number=result.number;detail=number>59?`${number}초 판독 · 59초 이하 대기`:'초 단위 감소 확인 중'}else detail='초 숫자 확인 대기 · 알림 보류'
+            const result=recognizeBuffTime(image,found,BUFF_DIGIT_MODEL)
+            if(result){time=result;number=result.seconds;detail=number>59?`아이콘 감지됨 · ${result.display} 남음 · 59초 이하에서 종료 추적`:'초 단위 감소 확인 중'}else {detail='아이콘 확인 · 시간 판독 대기 · 알림 보류';positions[monitor.id]=undefined}
           }
           const clock=advanceBuffClock(previous,number,now);clocks[monitor.id]=clock
           if(clock.valid)detail='종료 시점 추적 중'
-          next[monitor.id]={clock,detail,score:found?.score??null,number,candidate:found??null}
+          next[monitor.id]={clock,detail,score:found?.score??null,number,time,candidate:found??null}
         }catch(error){
           clocks[monitor.id]=advanceBuffClock(previous,null,now)
           next[monitor.id]={clock:clocks[monitor.id],detail:'분석 실패 · 알림 보류',score:null,number:null,candidate:null,error:error instanceof Error?error.message:'버프 인식 실패'}

@@ -201,7 +201,7 @@ export default function App() {
     exp: monitor.kind === 'exp' ? experience.observation : undefined,
     rune: monitor.kind === 'rune' ? runeObservation : undefined,
     countdown: monitor.kind === 'countdown' ? countdown : undefined,
-    buff: monitor.buffTarget && buffObservations[monitor.id] ? { ...buffObservations[monitor.id].clock, detail: buffObservations[monitor.id].detail, error: buffObservations[monitor.id].error } : undefined,
+    buff: monitor.buffTarget && buffObservations[monitor.id] ? { ...buffObservations[monitor.id].clock, identified:!!buffObservations[monitor.id].candidate, seconds:buffObservations[monitor.id].number, detail: buffObservations[monitor.id].detail, error: buffObservations[monitor.id].error } : undefined,
   })]));
   useEffect(() => {
     for (const monitor of settings.monitors) {
@@ -241,12 +241,13 @@ export default function App() {
     const detected = runtime.status === 'detected';
     const watching = runtime.status === 'watching';
     const statusLabel = !monitor.enabled ? '비활성화'
-      : detected ? '룬 후보 감지' : watching ? '아이콘 감시 중'
+      : detected ? '룬 후보 감지' : watching ? monitor.buffTarget ? '아이콘 감지됨' : '아이콘 감시 중'
       : runtime.status === 'running' ? monitor.buffTarget || monitor.kind === 'countdown' ? '종료 추적 중' : '숫자 감시 중'
       : runtime.status === 'warning' ? '종료 임박' : runtime.status === 'expired' ? '알림 발생'
       : runtime.status === 'no-sample' ? '샘플 필요' : runtime.status === 'error' ? monitor.kind === 'exp' ? '인식 실패' : '분석 실패' : '대기 중';
     const digits = !monitor.enabled ? 'OFF'
       : isRune ? detected ? '발견' : watching ? '감시 중' : runtime.status === 'error' ? '확인 필요' : '대기'
+      : monitor.buffTarget && watching && buffObservations[monitor.id]?.time ? buffObservations[monitor.id].time!.display
       : activeTimer ? formatTime(runtime.remainingSec) : '--:--';
     const percentage = isRune ? detected ? 100 : 0
       : monitor.enabled && activeTimer ? Math.max(0, Math.min(100, runtime.remainingSec / (monitor.kind === 'exp' ? settings.expIdleSec : monitor.buffTarget ? 59 : monitor.durationSec) * 100)) : 0;
@@ -281,7 +282,7 @@ export default function App() {
         void preview();
       }}><Volume2 size={15} />{isRune ? '룬 알림 소리 켜기' : '남은시간 알림 소리 켜기'}</button>}
       {monitor.kind === 'countdown' && <div className="experience-reading"><p>{countdown?.detail ?? '화면 공유 시 상단 중앙에서 남은시간 박스를 자동으로 찾습니다.'}</p>{countdown?.seconds != null && <strong>최근 읽은 시간: {countdown.seconds.toFixed(2)}초</strong>}{stream && countdown?.roi && <RegionThumbnail videoRef={videoRef} roi={countdown.roi} label="자동으로 찾은 남은시간 박스" />}<p>설정한 N초 이하에서 한 번 알립니다. 숫자를 읽지 못하거나 화면이 멈추면 알림을 보류합니다. 타이머가 다시 시작되면 새로 추적합니다. 제공된 영상 모양을 기준으로 한 실험 기능입니다.</p></div>}
-      {monitor.buffTarget && <div className="experience-reading"><span>{buffObservations[monitor.id]?.detail ?? '화면 오른쪽 위 버프 목록 감시'}</span>{buffObservations[monitor.id]?.number != null && <strong>최근 숫자: {buffObservations[monitor.id].number}</strong>}{buffObservations[monitor.id]?.error && <p className="experience-error">{buffObservations[monitor.id].error}</p>}</div>}
+      {monitor.buffTarget && <div className="experience-reading"><span>{buffObservations[monitor.id]?.detail ?? '화면 오른쪽 위 버프 목록 감시'}</span>{buffObservations[monitor.id]?.number != null && <strong>최근 시간: {buffObservations[monitor.id].time?.display ?? `${buffObservations[monitor.id].number}초`}</strong>}{buffObservations[monitor.id]?.error && <p className="experience-error">{buffObservations[monitor.id].error}</p>}</div>}
       {expanded && <div className="monitor-settings">
         <div className="monitor-audio-settings">
           <div className="monitor-audio-heading"><Volume2 size={17} /><strong>이 알림의 소리</strong><button className="button small" disabled={testing || audio.sound === 'silent'} onClick={() => void preview(monitor)}>{testing ? '재생 대기 중…' : '소리 미리 듣기'}</button></div>
@@ -289,7 +290,7 @@ export default function App() {
           {audio.sound === 'speech' && <div className="field-pair"><label>읽어 줄 문구<input aria-label={`${monitor.name} 읽어 줄 문구`} maxLength={200} value={audio.speechText} placeholder="비워 두면 감지 내용을 읽습니다" onChange={event => updateMonitor(monitor.id, { audio: { ...audio, speechText: event.target.value } })} /></label><label>알림 음성<select aria-label={`${monitor.name} 알림 음성`} value={audio.voiceURI} onChange={event => updateMonitor(monitor.id, { audio: { ...audio, voiceURI: event.target.value } })}><option value="">한국어 여성 음성 우선 · 자동</option>{audio.voiceURI && !voices.some(voice => voice.voiceURI === audio.voiceURI) && <option value={audio.voiceURI}>저장된 음성 · 이 기기에서 사용 불가</option>}{voices.map(voice => <option key={voice.voiceURI} value={voice.voiceURI}>{voice.name}</option>)}</select></label></div>}
           <p>개별 음량에 공통 음량을 곱해 재생합니다. 전체 음소거는 모든 알림에 적용됩니다.</p>
         </div>
-        {monitor.kind === 'buff' && <><label>인식할 버프<select aria-label={`${monitor.name} 인식할 버프`} value={monitor.buffTarget ?? ''} onChange={event => { const target=event.target.value as 'potion'|'union-wealth'; updateMonitor(monitor.id,{buffTarget:target||undefined,...(target ? {roi:monitor.roi??{x:.5,y:0,width:.5,height:.5},durationSec:60,warnBeforeSec:10} : {})}); }}><option value="">사용자 등록 버프 · 자동 인식 준비 중</option><option value="potion">비약 · 샘플 기반</option><option value="union-wealth">유니온의 부 · 샘플 기반</option></select></label>{monitor.buffTarget && <p>오른쪽 위 버프 목록에서 아이콘을 찾습니다. 노란 초 숫자가 59 이하이고 실제로 두 번 감소한 것을 확인해야 추적합니다. 종료 예상 시각이 3초 이내인 버프는 한 번으로 묶어 알립니다.</p>}</>}
+        {monitor.kind === 'buff' && <><label>인식할 버프<select aria-label={`${monitor.name} 인식할 버프`} value={monitor.buffTarget ?? ''} onChange={event => { const target=event.target.value as 'potion'|'union-wealth'; updateMonitor(monitor.id,{buffTarget:target||undefined,...(target ? {roi:monitor.roi??{x:.5,y:0,width:.5,height:.5},durationSec:60,warnBeforeSec:10} : {})}); }}><option value="">사용자 등록 버프 · 자동 인식 준비 중</option><option value="potion">비약 · 샘플 기반</option><option value="union-wealth">유니온의 부 · 샘플 기반</option></select></label>{monitor.buffTarget && <p>오른쪽 위 버프 목록에서 아이콘을 찾습니다. 노란 분·초 표시는 남은 시간으로 표시하며, 59초보다 많이 남았을 때도 아이콘 감지를 확인할 수 있습니다. 남은 시간이 59초 이하이고 실제로 두 번 감소한 것을 확인해야 추적합니다. 종료 예상 시각이 3초 이내인 버프는 한 번으로 묶어 알립니다.</p>}</>}
         {monitor.kind === 'buff' && <label>버프 이름<input aria-label="버프 이름" maxLength={40} value={monitor.name} onChange={(event) => updateMonitor(monitor.id, { name: event.target.value })} /></label>}
         {isRune ? <div className="rune-settings">
           <p>미니맵 부분을 인식 영역으로 지정해 주세요. 설명용 빨간 테두리가 아니라 안쪽의 보라·하늘색 또는 흰 테두리의 보라색 마름모를 찾습니다.</p>

@@ -1,3 +1,5 @@
+import { timerRuntime } from './engine'
+import type { Monitor } from '../types'
 import { describe,it,expect } from 'vitest'
 import { advanceBuffClock,emptyBuffClock,clusterBuffAlerts } from './buffs'
 const item=(id:string,end=30000,cycle=1)=>({id,name:id,expiresAt:end,cycle,warnBeforeSec:10})
@@ -44,5 +46,23 @@ describe('buff expiry clustering',()=>{
   expect(clusterBuffAlerts([item('potion')],20000,sent,3000,history)).toHaveLength(1)
   expect(clusterBuffAlerts([item('union',32000)],23000,sent,3000,history)).toHaveLength(0)
   expect(clusterBuffAlerts([item('potion',100000,2)],90000,sent,3000,history)).toHaveLength(1)
+ })
+})
+
+describe('identified buff display before seconds tracking',()=>{
+ const monitor:Monitor={id:'union',name:'유니온의 부',kind:'buff',buffTarget:'union-wealth',enabled:true,roi:{x:.5,y:0,width:.5,height:.5},durationSec:60,warnBeforeSec:10}
+ const buff={identified:true,seconds:543,valid:false,expiresAt:null,lastReadAt:1000,detail:'아이콘 감지됨 · 9:03 남음 · 59초 이하에서 종료 추적'}
+ it('shows a fresh nine-minute reading as identified without starting an alert clock',()=>{
+  const runtime=timerRuntime(monitor,null,1500,{hasSource:true,expIdleSec:60,buff})
+  expect(runtime.status).toBe('watching');expect(runtime.remainingSec).toBe(543)
+  expect(advanceBuffClock(emptyBuffClock(),543,1000).valid).toBe(false)
+ })
+ it('does not preserve identification when readings are stale or sharing ends',()=>{
+  expect(timerRuntime(monitor,null,6000,{hasSource:true,expIdleSec:60,buff}).status).toBe('waiting')
+  expect(timerRuntime(monitor,null,1500,{hasSource:false,expIdleSec:60,buff}).status).toBe('waiting')
+ })
+ it('surfaces a reader failure and still uses confirmed seconds for warnings',()=>{
+  expect(timerRuntime(monitor,null,1500,{hasSource:true,expIdleSec:60,buff:{...buff,error:'분석 실패'}}).status).toBe('error')
+  expect(timerRuntime(monitor,null,1500,{hasSource:true,expIdleSec:60,buff:{...buff,valid:true,expiresAt:10000}}).status).toBe('warning')
  })
 })

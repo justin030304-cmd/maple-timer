@@ -1,3 +1,4 @@
+import { BUFF_OVERLAY_DIGITS } from './buffOverlayDigitModel'
 import { BUFF_DIGIT_MODEL } from './buffDigitModel'
 import type { PixelFrame } from './analysis'
 export type BuffTarget = 'potion' | 'union-wealth'
@@ -47,7 +48,7 @@ export function matchBuffs(frame:PixelFrame, templates:PixelFrame):BuffMatch[]{
         const partialMatch=edge>=.91&&edge-edgeScore(frame,templates,tile+2,x,y,size)>=.02
         const value=Math.max(fullMatch?full:0,partialMatch?edge-.01:0)
         if(!value||best&&value<=best.score)continue
-        if(!fullMatch&&!recognizeBuffDigits(frame,{x,y,size},BUFF_DIGIT_MODEL))continue
+        if(!fullMatch&&!recognizeBuffTime(frame,{x,y,size},BUFF_DIGIT_MODEL))continue
         best={target:tile===0?'potion':'union-wealth',x,y,size,score:value}
       }
     }
@@ -103,14 +104,15 @@ export function verifyBuffEdges(frame:PixelFrame,templates:PixelFrame,match:Buff
 }
 
 export interface DigitModel {digit:string;aspect:number;mask:number[]}
-/** Yellow seconds overlay only. White minute labels are not interpreted as seconds. */
-export function recognizeBuffDigits(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|'size'>,models:DigitModel[]):{number:number;score:number}|null{
+export interface BuffTimeReading {seconds:number;display:string;format:'seconds'|'minutes-seconds';score:number}
+/** Read explicit yellow mm:ss separately from unlabelled yellow seconds. White minute labels are excluded. */
+export function recognizeBuffTime(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|'size'>,models:DigitModel[]):BuffTimeReading|null{
   const {size,x:originX,y:originY}=match,w=Math.round(size),h=w,mask=new Uint8Array(w*h),seen=new Uint8Array(w*h)
   for(let y=Math.floor(h*.29);y<Math.floor(h*.83);y++)for(let x=Math.floor(w*.05);x<Math.floor(w*.95);x++){
     const i=((originY+y)*frame.width+originX+x)*4,r=frame.data[i],g=frame.data[i+1],b=frame.data[i+2]
     mask[y*w+x]=Number(r>95&&g>95&&Math.abs(r-g)<70&&Math.min(r,g)-b>12)
   }
-  const boxes:{x:number;y:number;width:number;height:number}[]=[]
+  const boxes:{x:number;y:number;width:number;height:number}[]=[],dots:{x:number;y:number;width:number;height:number}[]=[]
   for(let i=0;i<mask.length;i++){
     if(!mask[i]||seen[i])continue
     const queue=[i];seen[i]=1;let left=w,right=0,top=h,bottom=0
@@ -119,20 +121,50 @@ export function recognizeBuffDigits(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y
       for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const nx=x+dx,ny=y+dy,n=ny*w+nx;if(nx>=0&&nx<w&&ny>=0&&ny<h&&mask[n]&&!seen[n]){seen[n]=1;queue.push(n)}}
     }
     const width=right-left+1,height=bottom-top+1
-    if(height>=h*.17&&height<=h*.6&&width<w*.4&&queue.length>=Math.max(4,8*(w/44)**2)&&top>=h*.32&&bottom+1<=h*.81)boxes.push({x:left,y:top,width,height})
+    if(height>=h*.17&&height<=h*.6&&width<w*.4&&queue.length>=Math.max(4,8*(w/44)**2)&&top>=h*.27&&bottom+1<=h*.81)boxes.push({x:left,y:top,width,height})
+    else if(height>=h*.03&&height<=h*.11&&width>=w*.025&&width<=w*.13&&queue.length>=3)dots.push({x:left,y:top,width,height})
   }
   boxes.sort((a,b)=>a.x-b.x)
-  if(!boxes.length||boxes.length>3)return null
-  if(Math.max(...boxes.map(b=>b.y))-Math.min(...boxes.map(b=>b.y))>size*.13)return null
-  let text='',agreement=1
-  for(const box of boxes){
-    const normalized=new Uint8Array(160)
-    for(let y=0;y<16;y++)for(let x=0;x<10;x++)normalized[y*10+x]=mask[(box.y+Math.min(box.height-1,Math.floor((y+.5)*box.height/16)))*w+box.x+Math.min(box.width-1,Math.floor((x+.5)*box.width/10))]
-    const scores=new Map<string,number>()
-    for(const model of models){let error=0;for(let i=0;i<160;i++)error+=Math.abs(normalized[i]-model.mask[i]);const value=1-(error/160*.85+Math.min(1,Math.abs(box.width/box.height-model.aspect))*.15);scores.set(model.digit,Math.max(scores.get(model.digit)??0,value))}
-    const ranked=[...scores].sort((a,b)=>b[1]-a[1])
-    if(!ranked[0]||ranked[0][1]<.82||ranked[0][1]-(ranked[1]?.[1]??0)<.025)return null
-    text+=ranked[0][0];agreement=Math.min(agreement,ranked[0][1])
+  const separators=dots.flatMap((a,i)=>dots.slice(i+1).flatMap(b=>{
+    const upper=a.y<b.y?a:b,lower=a.y<b.y?b:a
+    const gap=lower.y-upper.y
+    return Math.abs((upper.x+upper.width/2)-(lower.x+lower.width/2))<=size*.04&&gap>=size*.07&&gap<=size*.2&&upper.y>=size*.33&&lower.y+lower.height<=size*.7 ? [(upper.x+lower.x+upper.width/2+lower.width/2)/2] : []
+  }))
+  if(separators.length>1)return null
+  // Each font has its own text band. A wider band for the large overlay must
+  // not introduce gold icon artwork into the legacy seconds-only reading.
+  let best:BuffTimeReading|null=null
+  for(const [index,family] of [models,BUFF_OVERLAY_DIGITS].entries()){
+    const glyphs=boxes.filter(box=>index===0 ? box.y>=h*.32 : box.y>=h*.27&&box.y+box.height>=h*.59&&box.y+box.height<=h*.74)
+    if(!glyphs.length||glyphs.length>4||Math.max(...glyphs.map(b=>b.y))-Math.min(...glyphs.map(b=>b.y))>size*.13)continue
+    let text='',quality=1
+    for(const box of glyphs){
+      const normalized=new Uint8Array(160)
+      for(let y=0;y<16;y++)for(let x=0;x<10;x++)normalized[y*10+x]=mask[(box.y+Math.min(box.height-1,Math.floor((y+.5)*box.height/16)))*w+box.x+Math.min(box.width-1,Math.floor((x+.5)*box.width/10))]
+      const scores=new Map<string,number>()
+      for(const model of family){let error=0;for(let i=0;i<160;i++)error+=Math.abs(normalized[i]-model.mask[i]);const value=1-(error/160*.85+Math.min(1,Math.abs(box.width/box.height-model.aspect))*.15);scores.set(model.digit,Math.max(scores.get(model.digit)??0,value))}
+      const ranked=[...scores].sort((a,b)=>b[1]-a[1])
+      if(!ranked[0]||ranked[0][1]<.82||ranked[0][1]-(ranked[1]?.[1]??0)<.025){text='';break}
+      text+=ranked[0][0];quality=Math.min(quality,ranked[0][1])
+    }
+    if(!text)continue
+    let reading:BuffTimeReading
+    if(separators.length){
+      const split=glyphs.filter(b=>b.x+b.width<separators[0]).length
+      if(split<1||split>2||glyphs.length-split!==2)continue
+      const minutes=Number(text.slice(0,split)),seconds=Number(text.slice(split))
+      if(seconds>=60)continue
+      reading={seconds:minutes*60+seconds,display:`${minutes}:${String(seconds).padStart(2,'0')}`,format:'minutes-seconds',score:quality}
+    }else{
+      if(glyphs.length>3)continue
+      reading={seconds:Number(text),display:`${Number(text)}초`,format:'seconds',score:quality}
+    }
+    if(!best||reading.score>best.score)best=reading
   }
-  return {number:Number(text),score:agreement}
+  return best
+}
+/** Compatibility entry point: a colon clock must never become an integer such as 920. */
+export function recognizeBuffDigits(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|'size'>,models:DigitModel[]):{number:number;score:number}|null{
+  const time=recognizeBuffTime(frame,match,models)
+  return time?.format==='seconds'?{number:time.seconds,score:time.score}:null
 }

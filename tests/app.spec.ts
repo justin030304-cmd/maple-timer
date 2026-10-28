@@ -1048,6 +1048,7 @@ test('two tracked buffs group into one ten-second alert and losing the shared so
     draw();window.__experienceAnimation=window.setInterval(draw,180)
   })
   await page.getByRole('button',{name:'비약·유니온의 부 등록',exact:true}).click()
+
   const potion=card(page,'비약'),union=card(page,'유니온의 부')
   await expect(potion.locator('.timer-digits')).toHaveText(/^00:/,{timeout:15000})
   await expect(union.locator('.timer-digits')).toHaveText(/^00:/,{timeout:15000})
@@ -1060,4 +1061,30 @@ test('two tracked buffs group into one ten-second alert and losing the shared so
   await expect(potion.locator('.timer-digits')).toHaveText('--:--')
   await page.waitForTimeout(1200)
   await expect(grouped).toHaveCount(1)
+})
+
+test('recorded yellow mm:ss overlays show both buff identities without premature expiry alarms',async({page})=>{
+  await mockCapture(page);await mockSpeech(page)
+  await page.addInitScript(({key,settings})=>localStorage.setItem(key,JSON.stringify({version:1,settings})),{key:SETTINGS_KEY,settings:{...DEFAULT_SETTINGS,monitors:DEFAULT_SETTINGS.monitors.map(m=>({...m,enabled:false}))}})
+  await page.goto('/')
+  await beginCapture(page)
+  await page.evaluate(async()=>{
+    const capture=window.__capture!,ctx=capture.canvas.getContext('2d')!,video=document.createElement('video')
+    video.src='/tests/fixtures/buff-overlaid-minutes.webm';video.muted=true
+    await video.play()
+    const draw=()=>{ctx.fillStyle='#151e19';ctx.fillRect(0,0,1280,720);ctx.drawImage(video,700,80);capture.track.requestFrame?.();if(!video.ended)requestAnimationFrame(draw)}
+    draw()
+  })
+  await page.getByRole('button',{name:'비약·유니온의 부 등록',exact:true}).click()
+  const potion=card(page,'비약'),union=card(page,'유니온의 부')
+  await expect(potion.getByText('아이콘 감지됨',{exact:true})).toBeVisible()
+  await expect(union.getByText('아이콘 감지됨',{exact:true})).toBeVisible()
+  await expect(potion.locator('.timer-digits')).toHaveText(/^9:[12]\d$/)
+  await expect(union.locator('.timer-digits')).toHaveText(/^[89]:[05]\d$/)
+  await expect(potion.locator('.timer-digits')).toHaveText(/^9:1[2-6]$/,{timeout:9000})
+  await expect(union.locator('.timer-digits')).toHaveText(/^8:5[5-9]$/)
+  await expect(union.getByText(/59초 이하에서 종료 추적/)).toBeVisible()
+  await expect(page.locator('.activity-row').filter({hasText:'곧 종료됩니다.'})).toHaveCount(0)
+  await page.getByRole('button',{name:'공유 종료',exact:true}).click()
+  await expect(potion.locator('.timer-digits')).toHaveText('--:--')
 })

@@ -25,7 +25,7 @@ export interface TimerOptions {
   hasSource?: boolean
   exp?: ExpObservation
   countdown?: {valid:boolean;expiresAt:number|null;lastReadAt:number|null;detail:string;error?:string}
-  buff?: {valid:boolean;expiresAt:number|null;lastReadAt:number|null;detail:string;error?:string}
+  buff?: {identified?:boolean;seconds?:number|null;valid:boolean;expiresAt:number|null;lastReadAt:number|null;detail:string;error?:string}
   rune?: { present: boolean; score: number | null; frameError?: string | null }
 }
 
@@ -48,6 +48,7 @@ export function timerRuntime(monitor: Monitor, lastEventAt: number | null, nowMs
   if (monitor.buffTarget || monitor.kind === 'countdown') {
     const buff=monitor.kind === 'countdown' ? options.countdown : options.buff
     if(buff?.error)return {...base,status:'error',detail:buff.error}
+    if(monitor.buffTarget && options.buff?.identified && !options.buff.valid && options.buff.lastReadAt!==null && nowMs-options.buff.lastReadAt<=4000) return {...base,remainingSec:options.buff.seconds??base.remainingSec,status:'watching',detail:options.buff.detail}
     if(!buff?.valid||buff.expiresAt===null||buff.lastReadAt===null||nowMs-buff.lastReadAt>4000)return {...base,status:'waiting',detail:buff?.detail??(monitor.kind === 'countdown' ? '상단 중앙 남은시간 박스 자동 탐색 대기' : '버프 아이콘 감시 대기 중')}
     const remainingSec=Math.max(0,(buff.expiresAt-nowMs)/1000)
     return {...base,remainingSec,lastEventAt:buff.expiresAt,status:remainingSec<=0?'expired':remainingSec<=monitor.warnBeforeSec?'warning':'running',detail:buff.detail}
