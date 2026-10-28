@@ -34,7 +34,10 @@ describe('independent monitor audio', () => {
   it('persists different audio profiles for two buff regions', () => {
     let raw = ''
     const storage = {getItem:()=>raw,setItem:(_key:string,value:string)=>{raw=value}}
-    const settings = {...DEFAULT_SETTINGS,monitors:DEFAULT_SETTINGS.monitors.map(m=>m.id==='buff-exp'?{...m,audio:{...defaultMonitorAudio('buff'),sound:'silent' as const}}:m)}
+    const settings = {...DEFAULT_SETTINGS,monitors:[...DEFAULT_SETTINGS.monitors,
+      {id:'buff-exp',name:'비약',kind:'buff' as const,buffTarget:'potion' as const,roi:{x:.5,y:0,width:.5,height:.5},enabled:true,durationSec:60,warnBeforeSec:10,audio:{...defaultMonitorAudio('buff'),sound:'silent' as const}},
+      {id:'buff-drop',name:'유니온의 부',kind:'buff' as const,buffTarget:'union-wealth' as const,roi:{x:.5,y:0,width:.5,height:.5},enabled:true,durationSec:60,warnBeforeSec:10},
+    ]}
     expect(saveSettings(settings,storage)).toBe(true)
     const result = loadSettings(storage)
     expect(result.monitors.find(m=>m.id==='buff-exp')!.audio!.sound).toBe('silent')

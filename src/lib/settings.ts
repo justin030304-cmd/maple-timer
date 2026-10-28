@@ -14,11 +14,8 @@ export const DEFAULT_SETTINGS: Settings = {
   runeDetection: { minSize: 5, maxSize: 36, minScore: 0.7 },
   monitors: [
     { id: 'rune', name: '룬', kind: 'rune', enabled: true, roi: null, durationSec: 900, warnBeforeSec: 30 },
-    { id: 'buff-exp', name: '경험치 쿠폰', kind: 'buff', enabled: true, roi: null, durationSec: 1800, warnBeforeSec: 60 },
-    { id: 'buff-drop', name: '재물 획득의 비약', kind: 'buff', enabled: true, roi: null, durationSec: 7200, warnBeforeSec: 60 },
     { id: 'exp', name: '경험치 변화', kind: 'exp', enabled: true, roi: null, durationSec: 60, warnBeforeSec: 10 },
-    { id: 'booster', name: '부스터', kind: 'booster', enabled: false, roi: null, durationSec: 180, warnBeforeSec: 15 },
-    { id: 'countdown', name: '남은시간', kind: 'countdown', enabled: true, roi: null, durationSec: 999, warnBeforeSec: 10 },
+    { id: 'countdown', name: '부스터', kind: 'countdown', enabled: true, roi: null, durationSec: 999, warnBeforeSec: 10 },
   ],
 }
 
@@ -65,10 +62,12 @@ export function loadSettings(storage: StorageLike | null = browserStorage()): Se
     const saved = raw.settings
     const seen = new Set<string>()
     const monitors = Array.isArray(saved.monitors) ? saved.monitors.slice(0, 50).map(readMonitor).filter((monitor): monitor is Monitor => {
-      if (!monitor || seen.has(monitor.id)) return false
+      if (!monitor || monitor.kind === 'booster' || (monitor.kind === 'buff' && !monitor.buffTarget) || seen.has(monitor.id)) return false
       seen.add(monitor.id)
       return true
     }) : defaults.monitors
+    // Retain the working countdown monitor's ROI, audio and threshold; only its label changes.
+    for (const monitor of monitors) if (monitor.kind === 'countdown') monitor.name = '부스터'
     // Core modules remain available even if old or manually edited storage omits them.
     for (const core of defaults.monitors.filter(monitor => monitor.kind !== 'buff')) {
       if (!monitors.some(monitor => monitor.kind === core.kind)) monitors.push(core)

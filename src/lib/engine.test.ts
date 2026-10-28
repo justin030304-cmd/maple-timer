@@ -121,7 +121,7 @@ function memoryStorage(initial = '') {
 
 describe('persistent settings', () => {
   it('migrates existing version-one preferences without resetting monitors or regions', () => {
-    const previous = { volume: 0.2, soundEnabled: false, expIdleSec: 45, monitors: [{ ...monitor, id: 'custom-buff' }, ...DEFAULT_SETTINGS.monitors.filter(item => item.kind !== 'buff')] }
+    const previous = { volume: 0.2, soundEnabled: false, expIdleSec: 45, monitors: [{ ...monitor, id: 'custom-buff', buffTarget: 'potion' as const }, ...DEFAULT_SETTINGS.monitors.filter(item => item.kind !== 'buff')] }
     const storage = memoryStorage(JSON.stringify({ version: 1, settings: previous }))
     const loaded = loadSettings(storage)
     expect(loaded).toMatchObject({ ...previous, voiceURI: '', speechRate: 1, notificationSound: 'speech', runeDetection: { minSize: 5, maxSize: 36, minScore: 0.7 } })
@@ -147,9 +147,22 @@ describe('persistent settings', () => {
   })
   it('roundtrips settings and custom buffs', () => {
     const storage = memoryStorage()
-    const settings = { ...DEFAULT_SETTINGS, volume: 0.3, monitors: [...DEFAULT_SETTINGS.monitors, { ...monitor, id: 'custom-buff' }] }
+    const settings = { ...DEFAULT_SETTINGS, volume: 0.3, monitors: [...DEFAULT_SETTINGS.monitors, { ...monitor, id: 'custom-buff', buffTarget: 'potion' as const }] }
     expect(saveSettings(settings, storage)).toBe(true)
     expect(loadSettings(storage)).toEqual(settings)
+  })
+  it('removes retired rows while preserving the renamed booster and tracked buffs', () => {
+    const booster:Monitor={id:'old-countdown',name:'남은시간',kind:'countdown',enabled:false,roi:{x:.25,y:.125,width:.5,height:.25},durationSec:999,warnBeforeSec:17,audio:{sound:'dingdong',volume:.35,voiceURI:'saved',speechText:'사용자 문구'}}
+    const potion:Monitor={...monitor,id:'potion',name:'비약',buffTarget:'potion'}
+    const union:Monitor={...monitor,id:'union',name:'유니온의 부',buffTarget:'union-wealth'}
+    const storage=memoryStorage(JSON.stringify({version:1,settings:{...DEFAULT_SETTINGS,monitors:[booster,potion,union,{...monitor,id:'legacy-booster',kind:'booster'},{...monitor,id:'manual-buff'}]}}))
+    const loaded=loadSettings(storage)
+    expect(loaded.monitors.find(m=>m.id===booster.id)).toEqual({...booster,name:'부스터'})
+    expect(loaded.monitors.find(m=>m.id===potion.id)).toEqual(potion)
+    expect(loaded.monitors.find(m=>m.id===union.id)).toEqual(union)
+    expect(loaded.monitors.some(m=>m.kind==='booster'||(m.kind==='buff'&&!m.buffTarget))).toBe(false)
+    saveSettings(loaded,storage)
+    expect(loadSettings(storage)).toEqual(loaded)
   })
   it('recovers from corrupted and version-mismatched storage', () => {
     expect(loadSettings(memoryStorage('{'))).toEqual(DEFAULT_SETTINGS)
@@ -166,10 +179,10 @@ describe('persistent settings', () => {
     const loaded = loadSettings(storage)
     expect(loaded.volume).toBe(1)
     expect(loaded.expIdleSec).toBe(5)
-    expect(loaded.monitors.map(item => item.kind)).toEqual(['rune', 'exp', 'booster', 'countdown'])
+    expect(loaded.monitors.map(item => item.kind)).toEqual(['rune', 'exp', 'countdown'])
   })
   it('rejects malformed monitors and duplicate IDs', () => {
-    const storage = memoryStorage(JSON.stringify({ version: 1, settings: { monitors: [null, { id: 'broken' }, monitor, monitor] } }))
+    const storage = memoryStorage(JSON.stringify({ version: 1, settings: { monitors: [null, { id: 'broken' }, {...monitor,buffTarget:'potion'}, {...monitor,buffTarget:'potion'}] } }))
     expect(loadSettings(storage).monitors.filter(item => item.id === 'test')).toHaveLength(1)
   })
   it('uses independent defaults between loads', () => {
