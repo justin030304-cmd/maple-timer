@@ -22,7 +22,7 @@ type DragState = {
   original: ROI | null
 }
 
-const colorByKind = { rune: '#7962ad', buff: '#a16c21', exp: '#257b56', booster: '#3c7298' }
+const colorByKind = { countdown: '#3c7298', rune: '#7962ad', buff: '#a16c21', exp: '#257b56', booster: '#3c7298' }
 const clamp = (value: number, min = 0, max = 1) => Math.max(min, Math.min(max, value))
 
 export function ScreenPreview({ runeCandidate, stream, monitors, editingId, onSelectMonitor, onRoiChange, onVideoReady }: ScreenPreviewProps) {

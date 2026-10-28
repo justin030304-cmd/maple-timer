@@ -24,6 +24,7 @@ export interface TimerOptions {
   expIdleSec: number
   hasSource?: boolean
   exp?: ExpObservation
+  countdown?: {valid:boolean;expiresAt:number|null;lastReadAt:number|null;detail:string;error?:string}
   buff?: {valid:boolean;expiresAt:number|null;lastReadAt:number|null;detail:string;error?:string}
   rune?: { present: boolean; score: number | null; frameError?: string | null }
 }
@@ -36,7 +37,7 @@ export function timerRuntime(monitor: Monitor, lastEventAt: number | null, nowMs
   }
   if (!monitor.enabled) return { ...base, status: 'disabled', detail: '모듈이 꺼져 있습니다' }
   if (!options.hasSource) return { ...base, status: 'waiting', detail: '화면 공유를 시작해 주세요' }
-  if (!monitor.roi) return { ...base, status: 'unconfigured', detail: '화면에서 인식 영역을 지정해 주세요' }
+  if (!monitor.roi && monitor.kind !== 'countdown') return { ...base, status: 'unconfigured', detail: '화면에서 인식 영역을 지정해 주세요' }
   if (monitor.kind === 'rune') {
     if (options.rune?.frameError) return { ...base, status: 'error', detail: options.rune.frameError }
     if (!options.rune) return { ...base, status: 'waiting', detail: '미니맵 분석 · 첫 프레임 대기 중' }
@@ -44,10 +45,10 @@ export function timerRuntime(monitor: Monitor, lastEventAt: number | null, nowMs
       ? { ...base, status: 'detected', detail: '룬 후보 아이콘 감지 · 색상·모양 기반 실험' }
       : { ...base, status: 'watching', detail: '미니맵 마름모 아이콘 감시 중 · 실험' }
   }
-  if (monitor.buffTarget) {
-    const buff=options.buff
+  if (monitor.buffTarget || monitor.kind === 'countdown') {
+    const buff=monitor.kind === 'countdown' ? options.countdown : options.buff
     if(buff?.error)return {...base,status:'error',detail:buff.error}
-    if(!buff?.valid||buff.expiresAt===null||buff.lastReadAt===null||nowMs-buff.lastReadAt>4000)return {...base,status:'waiting',detail:buff?.detail??'버프 아이콘 감시 대기 중'}
+    if(!buff?.valid||buff.expiresAt===null||buff.lastReadAt===null||nowMs-buff.lastReadAt>4000)return {...base,status:'waiting',detail:buff?.detail??(monitor.kind === 'countdown' ? '상단 중앙 남은시간 박스 자동 탐색 대기' : '버프 아이콘 감시 대기 중')}
     const remainingSec=Math.max(0,(buff.expiresAt-nowMs)/1000)
     return {...base,remainingSec,lastEventAt:buff.expiresAt,status:remainingSec<=0?'expired':remainingSec<=monitor.warnBeforeSec?'warning':'running',detail:buff.detail}
   }

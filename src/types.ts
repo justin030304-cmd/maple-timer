@@ -1,4 +1,4 @@
-export type ModuleKind = 'rune' | 'buff' | 'exp' | 'booster'
+export type ModuleKind = 'rune' | 'buff' | 'exp' | 'booster' | 'countdown'
 
 /** Coordinates are fractions of the original shared image, never CSS pixels. */
 export interface ROI {

@@ -18,12 +18,13 @@ export const DEFAULT_SETTINGS: Settings = {
     { id: 'buff-drop', name: '재물 획득의 비약', kind: 'buff', enabled: true, roi: null, durationSec: 7200, warnBeforeSec: 60 },
     { id: 'exp', name: '경험치 변화', kind: 'exp', enabled: true, roi: null, durationSec: 60, warnBeforeSec: 10 },
     { id: 'booster', name: '부스터', kind: 'booster', enabled: false, roi: null, durationSec: 180, warnBeforeSec: 15 },
+    { id: 'countdown', name: '남은시간', kind: 'countdown', enabled: true, roi: null, durationSec: 999, warnBeforeSec: 10 },
   ],
 }
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem'>
 const cloneDefaults = (): Settings => ({ ...DEFAULT_SETTINGS, runeDetection: { ...DEFAULT_SETTINGS.runeDetection }, monitors: DEFAULT_SETTINGS.monitors.map(monitor => ({ ...monitor })) })
-const kinds: ModuleKind[] = ['rune', 'buff', 'exp', 'booster']
+const kinds: ModuleKind[] = ['rune', 'buff', 'exp', 'booster', 'countdown']
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const bounded = (value: unknown, fallback: number, min: number, max: number) => typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback
 

@@ -166,7 +166,7 @@ describe('persistent settings', () => {
     const loaded = loadSettings(storage)
     expect(loaded.volume).toBe(1)
     expect(loaded.expIdleSec).toBe(5)
-    expect(loaded.monitors.map(item => item.kind)).toEqual(['rune', 'exp', 'booster'])
+    expect(loaded.monitors.map(item => item.kind)).toEqual(['rune', 'exp', 'booster', 'countdown'])
   })
   it('rejects malformed monitors and duplicate IDs', () => {
     const storage = memoryStorage(JSON.stringify({ version: 1, settings: { monitors: [null, { id: 'broken' }, monitor, monitor] } }))
