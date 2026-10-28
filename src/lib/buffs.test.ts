@@ -76,10 +76,11 @@ describe('stable buff identity',()=>{
   expect(identity.frames).toBe(0)
   expect(advanceBuffIdentity(identity,candidate).frames).toBe(1)
  })
- it('confirms repeated identity with small box jitter but not a different slot or target',()=>{
+ it('confirms identity through row reordering but resets for a different target or scale',()=>{
   const first=advanceBuffIdentity({candidate:null,frames:0},candidate)
   expect(advanceBuffIdentity(first,{...candidate,x:102,y:31}).frames).toBe(2)
-  expect(advanceBuffIdentity(first,{...candidate,x:180}).frames).toBe(1)
+  expect(advanceBuffIdentity(first,{...candidate,x:180}).frames).toBe(2)
+  expect(advanceBuffIdentity(first,{...candidate,size:24}).frames).toBe(1)
   expect(advanceBuffIdentity(first,{...candidate,target:'potion'}).frames).toBe(1)
  })
 })

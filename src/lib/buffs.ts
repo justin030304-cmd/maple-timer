@@ -1,63 +1,108 @@
 import { BUFF_OVERLAY_DIGITS } from './buffOverlayDigitModel'
-import { BUFF_DIGIT_MODEL } from './buffDigitModel'
 import type { PixelFrame } from './analysis'
 export type BuffTarget = 'potion' | 'union-wealth'
 export const BUFF_NAMES: Record<BuffTarget,string> = {potion:'비약','union-wealth':'유니온의 부'}
 export interface BuffMatch { target: BuffTarget; x:number; y:number; size:number; score:number }
-const points = [ .14,.35,.56,.77,.9 ]
-function score(frame:PixelFrame, template:PixelFrame, tile:number,x:number,y:number,size:number, fine=false) {
-  let difference=0,count=0
-  const ys=fine?[.08,.16,.24,.32,.4,.48,.56,.64,.72,.8,.88]:[.12,.32,.52,.64]
-  for(const py of ys)for(const px of points){
-    if(fine&&py>=.64&&px<.45)continue
-    const i=(Math.min(frame.height-1,y+Math.floor(py*size))*frame.width+x+Math.floor(px*size))*4
-    const t=(Math.floor(py*32)*template.width+tile*32+Math.floor(px*32))*4
-    for(let c=0;c<3;c++){difference+=Math.abs(frame.data[i+c]-template.data[t+c]);count++}
-  }
-  return 1-difference/(count*255)
-}
-function edgeScore(frame:PixelFrame,templates:PixelFrame,tile:number,x:number,y:number,size:number):number{
-  let error=0,count=0
-  for(const [px,py] of [[.12,.1],[.3,.1],[.5,.1],[.7,.1],[.9,.1],[.9,.72],[.9,.88],[.7,.88],[.5,.88]]){
-    const i=((y+Math.floor(py*size))*frame.width+x+Math.floor(px*size))*4,j=(Math.floor(py*32)*templates.width+tile*32+Math.floor(px*32))*4
-    for(let c=0;c<3;c++){error+=Math.abs(frame.data[i+c]-templates.data[j+c]);count++}
-  }
-  return 1-error/(count*255)
-}
-function classScore(frame:PixelFrame,templates:PixelFrame,tiles:number[],x:number,y:number,size:number,edge=false,fine=true):number{
-  let best=0
-  for(const tile of tiles)if((tile+1)*32<=templates.width)best=Math.max(best,edge?edgeScore(frame,templates,tile,x,y,size):score(frame,templates,tile,x,y,size,fine))
-  return best
-}
 const positiveTiles=(tile:number)=>tile===0?[0,6]:[1]
 const negativeTiles=(tile:number)=>tile===0?[2]:[3,4,5]
-/** Parser proposes icon rectangles at several UI sizes; matcher compares the
- * two references and their lookalike neighbours, excluding the minute text. */
-export function matchBuffs(frame:PixelFrame, templates:PixelFrame):BuffMatch[]{
+const luma=(data:Uint8ClampedArray,index:number)=>(data[index]+data[index+1]*2+data[index+2])/4
+function neutralFrame(frame:PixelFrame,x:number,y:number,size:number,coarse=false):boolean{
+  let count=0
+  for(const [px,py] of [[.1,.1],[.9,.1],[.9,.9],[.1,.9]]){
+    const i=((y+Math.floor(py*size))*frame.width+x+Math.floor(px*size))*4
+    const low=Math.min(frame.data[i],frame.data[i+1],frame.data[i+2]),high=Math.max(frame.data[i],frame.data[i+1],frame.data[i+2])
+    if(low>=65&&high-low<85)count++
+  }
+  return count>=(coarse?1:2)
+}
+function paletteMatches(frame:PixelFrame,tile:number,x:number,y:number,size:number,coarse=false):boolean{
+  let count=0
+  if(tile===0){
+    for(const py of [.08,.13,.18,.23,.28])for(const px of [.1,.15,.2,.25,.3]){
+      const i=((y+Math.floor(py*size))*frame.width+x+Math.floor(px*size))*4,r=frame.data[i],g=frame.data[i+1],b=frame.data[i+2]
+      if(g>r+6&&b>r+10&&g>b*.6&&b>g*.65&&Math.max(r,g,b)>40)count++
+    }
+    if(count<(coarse?2:4))return false
+    count=0
+    for(const py of [.73,.77,.81,.85,.89])for(const px of [.48,.56,.64,.72,.8,.88]){
+      const i=((y+Math.floor(py*size))*frame.width+x+Math.floor(px*size))*4,r=frame.data[i],g=frame.data[i+1],b=frame.data[i+2]
+      if(Math.min(r,g)>b+8&&Math.max(r,g)>55)count++
+    }
+    return count>=(coarse?1:2)
+  }
+  for(const py of [.1,.17,.24])for(const px of [.2,.35,.5,.65,.8]){
+    const i=((y+Math.floor(py*size))*frame.width+x+Math.floor(px*size))*4,r=frame.data[i],g=frame.data[i+1],b=frame.data[i+2]
+    if(Math.min(r,g)>b+10&&Math.max(r,g)>80)count++
+  }
+  return count>=(coarse?1:3)
+}
+function patchCorrelation(frame:PixelFrame,templates:PixelFrame,tile:number,x:number,y:number,size:number,bottom:boolean,stride=1):number{
+  let a=0,b=0,aa=0,bb=0,ab=0,n=0
+  for(let py=bottom?23:2;py<(bottom?30:10);py+=stride)for(let px=bottom?14:3;px<(bottom?28:29);px+=stride){
+    const i=((y+Math.floor((py+.5)*size/32))*frame.width+x+Math.floor((px+.5)*size/32))*4,j=(py*templates.width+tile*32+px)*4
+    const va=luma(frame.data,i),vb=luma(templates.data,j)
+    a+=va;b+=vb;aa+=va*va;bb+=vb*vb;ab+=va*vb;n++
+  }
+  return (ab-a*b/n)/Math.sqrt(Math.max(.001,(aa-a*a/n)*(bb-b*b/n)))
+}
+function structuralClass(frame:PixelFrame,templates:PixelFrame,tiles:number[],x:number,y:number,size:number,stride=1){
+  let best={top:-1,bottom:-1,score:-1}
+  for(const tile of tiles)if((tile+1)*32<=templates.width){
+    const top=patchCorrelation(frame,templates,tile,x,y,size,false,stride),bottom=patchCorrelation(frame,templates,tile,x,y,size,true,stride),score=top*.6+bottom*.4
+    if(score>best.score)best={top,bottom,score}
+  }
+  return best
+}
+// Broad color agreement proposes locations only; final identity uses the
+// unobscured structural patches and rejects similar icons independently.
+function appearanceProposal(frame:PixelFrame,templates:PixelFrame,tiles:number[],x:number,y:number,size:number):number{
+  let best=0
+  for(const tile of tiles){
+    let error=0,n=0
+    for(const py of [4,10,20,27])for(const px of [4,10,16,22,27]){
+      const i=((y+Math.floor((py+.5)*size/32))*frame.width+x+Math.floor((px+.5)*size/32))*4,j=(py*templates.width+tile*32+px)*4
+      for(let c=0;c<3;c++){error+=Math.abs(frame.data[i+c]-templates.data[j+c]);n++}
+    }
+    best=Math.max(best,1-error/(n*255))
+  }
+  return best
+}
+/** Timer pixels never contribute to identity: compare cap/emblem and lower
+ * bottle contents or Roman numeral, with brightness-normalized local contrast. */
+function identityScore(frame:PixelFrame,templates:PixelFrame,tile:number,x:number,y:number,size:number):number{
+  if(!neutralFrame(frame,x,y,size)||!paletteMatches(frame,tile,x,y,size))return 0
+  const match=structuralClass(frame,templates,positiveTiles(tile),x,y,size)
+  if(match.top<.5||match.bottom<(tile===0?.4:.55)||match.score<(tile===0?.6:.65))return 0
+  const other=structuralClass(frame,templates,negativeTiles(tile),x,y,size)
+  if(match.score-other.score<(tile===0?.008:.05))return 0
+  return match.score
+}
+/** Search scale includes 60px icons produced by the 960px analysis resize. */
+export function matchBuffs(frame:PixelFrame,templates:PixelFrame):BuffMatch[]{
   const result:BuffMatch[]=[]
   for(let tile=0;tile<2;tile++){
-    const positives=positiveTiles(tile),negatives=negativeTiles(tile)
+    const positives=positiveTiles(tile)
     let best:BuffMatch|null=null
-    for(const size of [20,24,28,30,32,34,36,40,44,48,56,64]){
+    for(const size of [20,24,28,30,32,34,36,40,44,48,52,56,60,64]){
       if(size>frame.width||size>frame.height)continue
-      const step=Math.max(2,Math.round(size/8)),proposals:{x:number;y:number;score:number}[]=[]
+      const step=Math.max(2,Math.round(size/(size>=48?16:8))),proposals:{x:number;y:number;score:number}[]=[],colorProposals:{x:number;y:number;score:number}[]=[]
       for(let y=0;y<=frame.height-size;y+=step)for(let x=0;x<=frame.width-size;x+=step){
-        const value=Math.max(classScore(frame,templates,positives,x,y,size,false,false),classScore(frame,templates,positives,x,y,size,true)-.02)
-        if(value<.72)continue
-        if(proposals.length<20||value>proposals[proposals.length-1].score){
-          proposals.push({x,y,score:value});proposals.sort((a,b)=>b.score-a.score);if(proposals.length>20)proposals.pop()
+        if(!neutralFrame(frame,x,y,size,true)||!paletteMatches(frame,tile,x,y,size,true))continue
+        const ranks=[(structuralClass(frame,templates,positives,x,y,size,3).score+1)/2,appearanceProposal(frame,templates,positives,x,y,size)]
+        for(const [index,list] of [proposals,colorProposals].entries()){
+          const value=ranks[index]
+          if(value>=.45&&(list.length<20||value>list[list.length-1].score)){list.push({x,y,score:value});list.sort((a,b)=>b.score-a.score);if(list.length>20)list.pop()}
         }
       }
-      for(const candidate of proposals)for(let dy=-step;dy<=step;dy++)for(let dx=-step;dx<=step;dx++){
+      const checked=new Set<number>()
+      for(const candidate of [...proposals,...colorProposals])for(let dy=-step;dy<=step;dy++)for(let dx=-step;dx<=step;dx++){
         const x=candidate.x+dx,y=candidate.y+dy
         if(x<0||y<0||x+size>frame.width||y+size>frame.height)continue
-        const full=classScore(frame,templates,positives,x,y,size),edge=classScore(frame,templates,positives,x,y,size,true)
-        const fullMatch=full>=.86&&full-classScore(frame,templates,negatives,x,y,size)>=.012
-        const partialMatch=edge>=.91&&edge-classScore(frame,templates,negatives,x,y,size,true)>=.02
-        const value=Math.max(fullMatch?full:0,partialMatch?edge-.01:0)
-        if(!value||best&&value<=best.score)continue
-        if(!fullMatch&&!recognizeBuffTime(frame,{x,y,size},BUFF_DIGIT_MODEL))continue
-        best={target:tile===0?'potion':'union-wealth',x,y,size,score:value}
+        const key=y*frame.width+x
+        if(checked.has(key))continue
+        checked.add(key)
+        const value=identityScore(frame,templates,tile,x,y,size)
+        if(value>0&&(!best||value>best.score))best={target:tile===0?'potion':'union-wealth',x,y,size,score:value}
       }
     }
     if(best)result.push(best)
@@ -107,10 +152,7 @@ export function clusterBuffAlerts(items:BuffAlertItem[],now:number,notified:Set<
  * its centre. A position alone is never enough to keep a target alive. */
 export function verifyBuffEdges(frame:PixelFrame,templates:PixelFrame,match:BuffMatch):boolean{
   const tile=match.target==='potion'?0:1
-  const {x,y,size}=match,positives=positiveTiles(tile),negatives=negativeTiles(tile)
-  const full=classScore(frame,templates,positives,x,y,size),edge=classScore(frame,templates,positives,x,y,size,true)
-  if(full>=.86&&full-classScore(frame,templates,negatives,x,y,size)>=.012)return true
-  return edge>=.91&&edge-classScore(frame,templates,negatives,x,y,size,true)>=.02&&recognizeBuffTime(frame,match,BUFF_DIGIT_MODEL)!==null
+  return identityScore(frame,templates,tile,match.x,match.y,match.size)>0
 }
 
 /** White lower-left minute labels rule out an ending-soon yellow seconds clock. */
@@ -137,18 +179,18 @@ export interface BuffIdentity {candidate:BuffMatch|null;frames:number}
 export function advanceBuffIdentity(previous:BuffIdentity,found:BuffMatch|null):BuffIdentity{
   if(!found)return {candidate:null,frames:0}
   const old=previous.candidate
-  const same=old&&old.target===found.target&&Math.min(old.size,found.size)/Math.max(old.size,found.size)>=.72&&Math.hypot(old.x+old.size/2-found.x-found.size/2,old.y+old.size/2-found.y-found.size/2)<=Math.max(old.size,found.size)*.3
+  const same=old&&old.target===found.target&&Math.min(old.size,found.size)/Math.max(old.size,found.size)>=.72
   return {candidate:found,frames:same?Math.min(2,previous.frames+1):1}
 }
 
 export interface DigitModel {digit:string;aspect:number;mask:number[]}
 export interface BuffTimeReading {seconds:number;display:string;format:'seconds'|'minutes-seconds';score:number}
 /** Read explicit yellow mm:ss separately from unlabelled yellow seconds. White minute labels are excluded. */
-export function recognizeBuffTime(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|'size'>,models:DigitModel[]):BuffTimeReading|null{
+function readBuffTimeAtBox(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|'size'>,models:DigitModel[],yellowThreshold=95):BuffTimeReading|null{
   const {size,x:originX,y:originY}=match,w=Math.round(size),h=w,mask=new Uint8Array(w*h),seen=new Uint8Array(w*h)
   for(let y=Math.floor(h*.29);y<Math.floor(h*.83);y++)for(let x=Math.floor(w*.05);x<Math.floor(w*.95);x++){
     const i=((originY+y)*frame.width+originX+x)*4,r=frame.data[i],g=frame.data[i+1],b=frame.data[i+2]
-    mask[y*w+x]=Number(r>95&&g>95&&Math.abs(r-g)<70&&Math.min(r,g)-b>12)
+    mask[y*w+x]=Number(r>yellowThreshold&&g>yellowThreshold&&Math.abs(r-g)<70&&Math.min(r,g)-b>12)
   }
   const boxes:{x:number;y:number;width:number;height:number}[]=[],dots:{x:number;y:number;width:number;height:number}[]=[]
   for(let i=0;i<mask.length;i++){
@@ -196,13 +238,32 @@ export function recognizeBuffTime(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|
       if(seconds>=60)continue
       reading={seconds:minutes*60+seconds,display:`${minutes}:${String(seconds).padStart(2,'0')}`,format:'minutes-seconds',score:quality}
     }else{
-      if(glyphs.length>3)continue
+      if(glyphs.length>2||Number(text)>60)continue
       reading={seconds:Number(text),display:`${Number(text)}초`,format:'seconds',score:quality}
     }
     if(whiteMinutes&&reading.seconds<=59)continue
     if(!best||reading.score>best.score)best=reading
   }
   return best
+}
+/** Border alignment can differ by a pixel after capture resizing. Retry only
+ * an unreadable clock and require agreeing shifted reads before accepting it. */
+export function recognizeBuffTime(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|'size'>,models:DigitModel[]):BuffTimeReading|null{
+  const direct=readBuffTimeAtBox(frame,match,models)
+  if(direct)return direct
+  if(hasWhiteMinuteLabel(frame,match))return null
+  const votes=new Map<string,{reading:BuffTimeReading;count:number}>()
+  for(const threshold of [95,125,155])for(const dy of [0,-1,1,-2,2]){
+    if(threshold===95&&dy===0)continue
+    const shifted={...match,y:match.y+dy}
+    if(shifted.y<0||shifted.y+shifted.size>frame.height)continue
+    const reading=readBuffTimeAtBox(frame,shifted,models,threshold)
+    if(!reading)continue
+    const key=`${reading.format}:${reading.seconds}`,old=votes.get(key)
+    votes.set(key,{reading:old&&old.reading.score>reading.score?old.reading:reading,count:(old?.count??0)+1})
+  }
+  const agreed=[...votes.values()].filter(v=>v.count>=2).sort((a,b)=>b.count-a.count||b.reading.score-a.reading.score)
+  return agreed.length===1||agreed.length>1&&agreed[0].count>agreed[1].count?agreed[0].reading:null
 }
 /** Compatibility entry point: a colon clock must never become an integer such as 920. */
 export function recognizeBuffDigits(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|'size'>,models:DigitModel[]):{number:number;score:number}|null{

@@ -1,5 +1,5 @@
 import {test,expect} from '@playwright/test'
-test('overlaid minute clocks do not hide the two target buff identities',async({page})=>{
+test('overlaid minute clocks remain separate from identity and a different emblem is excluded',async({page})=>{
   await page.goto('/')
   const result=await page.evaluate(async()=>{
     const {matchBuffs,recognizeBuffDigits,recognizeBuffTime}=await import('/src/lib/'+'buffs.ts') as typeof import('../src/lib/buffs')
@@ -12,16 +12,16 @@ test('overlaid minute clocks do not hide the two target buff identities',async({
     for(let n=0;n<3;n++){
       c.width=552;c.height=100;ctx.drawImage(strip,0,n*100,552,100,0,0,552,100)
       const frame=ctx.getImageData(0,0,552,100)
-      result.push({matches:matchBuffs(frame,model).map(m=>({...m,time:recognizeBuffTime(frame,m,BUFF_DIGIT_MODEL)})),direct:[{x:68,y:21,size:64},{x:324,y:21,size:64}].map(m=>recognizeBuffDigits(frame,m,BUFF_DIGIT_MODEL))})
+      result.push({matches:matchBuffs(frame,model).map(m=>({...m,time:recognizeBuffTime(frame,m,BUFF_DIGIT_MODEL)})),otherClock:recognizeBuffTime(frame,{x:67,y:22,size:64},BUFF_DIGIT_MODEL),direct:[{x:68,y:21,size:64},{x:324,y:21,size:64}].map(m=>recognizeBuffDigits(frame,m,BUFF_DIGIT_MODEL))})
     }
     return result
   })
   for(const r of result){
-    expect(r.matches.map(m=>m.target)).toEqual(['potion','union-wealth'])
+    expect(r.matches.map(m=>m.target)).toEqual(['potion'])
     expect(r.direct).toEqual([null,null])
     expect(Math.abs(r.matches[0].x-324)).toBeLessThan(9)
-    expect(Math.abs(r.matches[1].x-67)).toBeLessThan(9)
     expect(r.matches.every(m=>m.time?.format==='minutes-seconds')).toBe(true)
   }
-  expect(result.map(r=>r.matches.map(m=>m.time?.seconds))).toEqual([[560,543],[556,539],[552,535]])
+  expect(result.map(r=>r.matches.map(m=>m.time?.seconds))).toEqual([[560],[556],[552]])
+  expect(result.map(r=>r.otherClock?.seconds)).toEqual([543,539,535])
 })

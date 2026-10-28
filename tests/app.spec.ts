@@ -1041,7 +1041,7 @@ test('two tracked buffs group into one ten-second alert and losing the shared so
         const seconds=Math.max(0,initial-Math.floor((Date.now()-start)/1000)),y=80
         ctx.imageSmoothingEnabled=false;ctx.drawImage(sprite,index*32,0,32,32,x,y,44,44)
         // A real seconds display replaces the old white minute counter.
-        ctx.fillStyle='#181818';ctx.fillRect(x,y+27,20,17);ctx.fillRect(x+7,y+13,32,22)
+        ctx.fillStyle='#181818';ctx.fillRect(x,y+27,20,17);ctx.fillRect(x+7,y+13,32,19)
         const digits=String(seconds).split('').map(digit=>BUFF_DIGIT_MODEL.find(m=>m.digit===digit)!)
         const widths=digits.map(d=>Math.round(d.aspect*14));let left=x+22-(widths.reduce((a,b)=>a+b,0)+(digits.length-1)*3)/2
         for(let d=0;d<digits.length;d++){
@@ -1070,7 +1070,7 @@ test('two tracked buffs group into one ten-second alert and losing the shared so
   await expect(grouped).toHaveCount(1)
 })
 
-test('recorded yellow mm:ss overlays show both buff identities without premature expiry alarms',async({page})=>{
+test('recorded yellow mm:ss overlays identify the potion and exclude a different emblem',async({page})=>{
   await mockCapture(page);await mockSpeech(page)
   await page.addInitScript(({key,settings})=>localStorage.setItem(key,JSON.stringify({version:1,settings})),{key:SETTINGS_KEY,settings:{...DEFAULT_SETTINGS,monitors:DEFAULT_SETTINGS.monitors.map(m=>({...m,enabled:false}))}})
   await page.goto('/')
@@ -1085,12 +1085,12 @@ test('recorded yellow mm:ss overlays show both buff identities without premature
   await page.getByRole('button',{name:'비약·유니온의 부 등록',exact:true}).click()
   const potion=card(page,'비약'),union=card(page,'유니온의 부')
   await expect(potion.getByText('아이콘 감지됨',{exact:true})).toBeVisible()
-  await expect(union.getByText('아이콘 감지됨',{exact:true})).toBeVisible()
+  await expect(union.getByText('아이콘 감지됨',{exact:true})).toHaveCount(0)
   await expect(potion.locator('.timer-digits')).toHaveText(/^9:[12]\d$/)
-  await expect(union.locator('.timer-digits')).toHaveText(/^[89]:[05]\d$/)
+  await expect(union.locator('.timer-digits')).toHaveText('--:--')
   await expect(potion.locator('.timer-digits')).toHaveText(/^9:1[2-6]$/,{timeout:9000})
-  await expect(union.locator('.timer-digits')).toHaveText(/^8:5[5-9]$/)
-  await expect(union.getByText(/59초 이하에서 종료 추적/)).toBeVisible()
+  await expect(union.locator('.timer-digits')).toHaveText('--:--')
+  await expect(potion.getByText(/59초 이하에서 종료 추적/)).toBeVisible()
   await expect(page.locator('.activity-row').filter({hasText:'곧 종료됩니다.'})).toHaveCount(0)
   await page.getByRole('button',{name:'공유 종료',exact:true}).click()
   await expect(potion.locator('.timer-digits')).toHaveText('--:--')
@@ -1177,5 +1177,36 @@ test('recorded absent union never identifies or alerts while an active potion wi
   await expect(union.getByText('아이콘 감지됨',{exact:true})).toHaveCount(0)
   await expect(page.locator('.activity-row').filter({hasText:'곧 종료됩니다.'})).toHaveCount(0)
   await expect(potion.locator('.timer-digits')).toHaveText('--:--')
+  await page.getByRole('button',{name:'공유 종료',exact:true}).click()
+})
+
+test('recorded covered potion survives row reordering without inventing union or an early expiry alert',async({page})=>{
+  test.setTimeout(40000)
+  await mockCapture(page)
+  await page.addInitScript(({key,settings})=>localStorage.setItem(key,JSON.stringify({version:1,settings})),{key:SETTINGS_KEY,settings:{...DEFAULT_SETTINGS,monitors:DEFAULT_SETTINGS.monitors.map(m=>({...m,enabled:false}))}})
+  await page.goto('/')
+  await beginCapture(page)
+  await page.getByRole('button',{name:'비약·유니온의 부 등록',exact:true}).click()
+  await page.evaluate(async()=>{
+    const state=window as unknown as {unionFalseDetections:number;unionObserver:MutationObserver}
+    state.unionFalseDetections=0
+    state.unionObserver=new MutationObserver(()=>{
+      for(const row of document.querySelectorAll('.kind-buff'))if(row.querySelector('.monitor-name')?.textContent==='유니온의 부'&&row.textContent?.includes('아이콘 감지됨'))state.unionFalseDetections++
+    })
+    state.unionObserver.observe(document.querySelector('.modules-column')!,{subtree:true,childList:true,characterData:true})
+    const capture=window.__capture!,ctx=capture.canvas.getContext('2d')!,video=document.createElement('video')
+    capture.canvas.width=2048;capture.canvas.height=1080
+    video.src='/tests/fixtures/buff-obscured-countdown.webm';video.muted=true;await video.play()
+    const draw=()=>{ctx.fillStyle='#151e19';ctx.fillRect(0,0,2048,1080);ctx.drawImage(video,1024,0);capture.track.requestFrame?.();if(!video.ended)requestAnimationFrame(draw)}
+    draw()
+  })
+  const potion=card(page,'비약'),union=card(page,'유니온의 부')
+  await expect(potion.getByText('아이콘 감지됨',{exact:true})).toBeVisible({timeout:10000})
+  await expect(potion.locator('.timer-digits')).toHaveText(/2:[45]\d/,{timeout:10000})
+  await page.waitForTimeout(4500)
+  await expect(potion.locator('.timer-digits')).toHaveText(/2:[34]\d/)
+  expect(await page.evaluate(()=>(window as unknown as {unionFalseDetections:number}).unionFalseDetections)).toBe(0)
+  await expect(union.getByText('아이콘 감지됨',{exact:true})).toHaveCount(0)
+  await expect(page.locator('.activity-row').filter({hasText:'곧 종료됩니다.'})).toHaveCount(0)
   await page.getByRole('button',{name:'공유 종료',exact:true}).click()
 })
