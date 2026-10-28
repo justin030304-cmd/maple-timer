@@ -158,7 +158,7 @@ async function changeFrame(page: Page, color = '#ffffff') {
 
 
 /** Deliberately synthetic fixtures exercise the pipeline, not game-screenshot accuracy. */
-async function drawRuneFixture(page: Page, kind: 'diamond' | 'violet' | 'outside' | 'square' | 'circle' | 'annotation') {
+async function drawRuneFixture(page: Page, kind: 'diamond' | 'violet' | 'violet-near-map' | 'outside' | 'square' | 'circle' | 'annotation') {
   await page.evaluate(kind => {
     const capture = window.__capture!
     const context = capture.canvas.getContext('2d')!
@@ -173,9 +173,12 @@ async function drawRuneFixture(page: Page, kind: 'diamond' | 'violet' | 'outside
       for (let y = -8; y <= 8; y++) for (let x = -8; x <= 8; x++) {
         const distance = kind === 'square' ? Math.max(Math.abs(x), Math.abs(y)) : kind === 'circle' ? Math.sqrt(x * x + y * y) : Math.abs(x) + Math.abs(y)
         if (distance > 8) continue
-        context.fillStyle = kind === 'violet' ? distance >= 7 ? '#f5f5fb' : '#ae53e3' : distance >= 7 ? '#d64adb' : distance >= 6 ? '#f5f5fb' : '#2adde7'
+        context.fillStyle = (kind === 'violet' || kind === 'violet-near-map') ? distance >= 7 ? '#f5f5fb' : kind === 'violet-near-map' ? '#ae6cc4' : '#ae53e3' : distance >= 7 ? '#d64adb' : distance >= 6 ? '#f5f5fb' : '#2adde7'
         context.fillRect(centerX + x, centerY + y, 1, 1)
       }
+    }
+    if (kind === 'violet-near-map') {
+      context.fillStyle = '#a04bb9'; context.fillRect(270, 80, 1, 125)
     }
     capture.track.requestFrame?.()
   }, kind)
@@ -730,6 +733,27 @@ test('Rune white-outlined violet marker without cyan emits one speech alert', as
   await expect(rune.locator('.timer-digits')).toHaveText('발견')
   await expect(runeLog(page)).toHaveCount(1)
   await expect.poll(() => page.evaluate(() => window.__spoken!.filter(item => item.text === '룬 아이콘 후보가 감지되었습니다. 미니맵을 확인해 주세요.').length)).toBe(1)
+  await page.waitForTimeout(1250)
+  await expect(runeLog(page)).toHaveCount(1)
+})
+
+test('Rune with nearby purple map lines remains a separate marker and speaks only once', async ({ page }) => {
+  await mockCapture(page)
+  await mockSpeech(page)
+  await seedRegions(page)
+  await page.goto('/')
+  const rune = card(page, '룬')
+  await rune.getByRole('button', {name:'룬',exact:true}).click()
+  await rune.getByLabel('룬 알림 소리').selectOption('speech')
+  await rune.getByLabel('룬 읽어 줄 문구').fill('룬 떳어요')
+  await rune.getByRole('button', {name:'소리 미리 듣기',exact:true}).click()
+  await expect.poll(() => page.evaluate(() => window.__spoken!.length)).toBe(1)
+  await page.evaluate(() => { window.__spoken = [] })
+  await beginCapture(page)
+  await drawRuneFixture(page, 'violet-near-map')
+  await expect(rune.locator('.timer-digits')).toHaveText('발견')
+  await expect(runeLog(page)).toHaveCount(1)
+  await expect.poll(() => page.evaluate(() => window.__spoken!.filter(item => item.text === '룬 떳어요').length)).toBe(1)
   await page.waitForTimeout(1250)
   await expect(runeLog(page)).toHaveCount(1)
 })

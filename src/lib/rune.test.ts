@@ -29,6 +29,21 @@ function diamond(target: PixelFrame, cx: number, cy: number, radius = 6, mode: '
 const options = { ...DEFAULT_RUNE_OPTIONS }
 
 describe('experimental minimap diamond recognition', () => {
+  it('separates a white-outlined violet marker from nearby purple map scaffolding', () => {
+    const sample = frame(140, 100)
+    for (let y = -8; y <= 8; y++) for (let x = -8; x <= 8; x++) {
+      const distance = Math.abs(x) + Math.abs(y)
+      if (distance <= 8) pixel(sample, 55 + x, 40 + y, distance === 8 ? [225, 225, 232] : [174, 108, 196])
+    }
+    // Dark pixels separate the map line from the marker. Unconditional dilation
+    // wrongly joins them into an oversized component and discards the rune.
+    for (let y = 6; y <= 88; y++) pixel(sample, 65, y, [160, 75, 185])
+    const result = detectRune(sample, options)
+    expect(result.candidate).not.toBeNull()
+    expect(result.candidate!.width).toBeLessThan(22)
+    expect(result.candidate!.height).toBeLessThan(22)
+  })
+
   it('finds a cyan + pink diamond at source-space pixel coordinates', () => {
     const sample = frame()
     diamond(sample, 46, 34)

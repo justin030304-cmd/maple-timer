@@ -73,14 +73,19 @@ export function detectRune(frame: PixelFrame, options: RuneDetectionOptions = DE
     const high = Math.max(red, green, blue), low = Math.min(red, green, blue)
     white[index] = Number(data[offset + 3] >= 160 && low >= 165 && high - low < 65)
   }
-  // Connect coloured edges separated by a one-pixel white outline. This does
-  // not enlarge the reported bounds; those still use original coloured pixels.
+  // Keep dark gaps intact: expanding all coloured pixels merges small runes
+  // with nearby map lines. Bridge only a white pixel between coloured parts.
   for (let index = 0; index < total; index++) {
-    if (!colours[index]) continue
+    if (colours[index]) { joined[index] = 1; continue }
+    if (!white[index]) continue
     const x = index % width, y = Math.floor(index / width)
+    let neighbours = 0
     for (let row = Math.max(0, y - 1); row <= Math.min(height - 1, y + 1); row++) {
-      for (let column = Math.max(0, x - 1); column <= Math.min(width - 1, x + 1); column++) joined[row * width + column] = 1
+      for (let column = Math.max(0, x - 1); column <= Math.min(width - 1, x + 1); column++) {
+        if (colours[row * width + column]) neighbours++
+      }
     }
+    if (neighbours >= 2) joined[index] = 1
   }
 
   let label = 0
