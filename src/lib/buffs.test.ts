@@ -1,7 +1,7 @@
 import { timerRuntime } from './engine'
 import type { Monitor } from '../types'
 import { describe,it,expect } from 'vitest'
-import { advanceBuffClock,emptyBuffClock,clusterBuffAlerts } from './buffs'
+import { advanceBuffClock,emptyBuffClock,clusterBuffAlerts,advanceBuffIdentity } from './buffs'
 const item=(id:string,end=30000,cycle=1)=>({id,name:id,expiresAt:end,cycle,warnBeforeSec:10})
 describe('buff seconds tracking',()=>{
  it('waits for 59 or below and two real second decrements',()=>{
@@ -64,5 +64,22 @@ describe('identified buff display before seconds tracking',()=>{
  it('surfaces a reader failure and still uses confirmed seconds for warnings',()=>{
   expect(timerRuntime(monitor,null,1500,{hasSource:true,expIdleSec:60,buff:{...buff,error:'분석 실패'}}).status).toBe('error')
   expect(timerRuntime(monitor,null,1500,{hasSource:true,expIdleSec:60,buff:{...buff,valid:true,expiresAt:10000}}).status).toBe('warning')
+ })
+})
+
+describe('stable buff identity',()=>{
+ const candidate={target:'union-wealth' as const,x:100,y:30,size:44,score:.95}
+ it('does not confirm an isolated matching frame and resets on absence',()=>{
+  let identity=advanceBuffIdentity({candidate:null,frames:0},candidate)
+  expect(identity.frames).toBe(1)
+  identity=advanceBuffIdentity(identity,null)
+  expect(identity.frames).toBe(0)
+  expect(advanceBuffIdentity(identity,candidate).frames).toBe(1)
+ })
+ it('confirms repeated identity with small box jitter but not a different slot or target',()=>{
+  const first=advanceBuffIdentity({candidate:null,frames:0},candidate)
+  expect(advanceBuffIdentity(first,{...candidate,x:102,y:31}).frames).toBe(2)
+  expect(advanceBuffIdentity(first,{...candidate,x:180}).frames).toBe(1)
+  expect(advanceBuffIdentity(first,{...candidate,target:'potion'}).frames).toBe(1)
  })
 })

@@ -24,17 +24,25 @@ function edgeScore(frame:PixelFrame,templates:PixelFrame,tile:number,x:number,y:
   }
   return 1-error/(count*255)
 }
+function classScore(frame:PixelFrame,templates:PixelFrame,tiles:number[],x:number,y:number,size:number,edge=false,fine=true):number{
+  let best=0
+  for(const tile of tiles)if((tile+1)*32<=templates.width)best=Math.max(best,edge?edgeScore(frame,templates,tile,x,y,size):score(frame,templates,tile,x,y,size,fine))
+  return best
+}
+const positiveTiles=(tile:number)=>tile===0?[0,6]:[1]
+const negativeTiles=(tile:number)=>tile===0?[2]:[3,4,5]
 /** Parser proposes icon rectangles at several UI sizes; matcher compares the
  * two references and their lookalike neighbours, excluding the minute text. */
 export function matchBuffs(frame:PixelFrame, templates:PixelFrame):BuffMatch[]{
   const result:BuffMatch[]=[]
   for(let tile=0;tile<2;tile++){
+    const positives=positiveTiles(tile),negatives=negativeTiles(tile)
     let best:BuffMatch|null=null
     for(const size of [20,24,28,30,32,34,36,40,44,48,56,64]){
       if(size>frame.width||size>frame.height)continue
       const step=Math.max(2,Math.round(size/8)),proposals:{x:number;y:number;score:number}[]=[]
       for(let y=0;y<=frame.height-size;y+=step)for(let x=0;x<=frame.width-size;x+=step){
-        const value=Math.max(score(frame,templates,tile,x,y,size),edgeScore(frame,templates,tile,x,y,size)-.02)
+        const value=Math.max(classScore(frame,templates,positives,x,y,size,false,false),classScore(frame,templates,positives,x,y,size,true)-.02)
         if(value<.72)continue
         if(proposals.length<20||value>proposals[proposals.length-1].score){
           proposals.push({x,y,score:value});proposals.sort((a,b)=>b.score-a.score);if(proposals.length>20)proposals.pop()
@@ -43,9 +51,9 @@ export function matchBuffs(frame:PixelFrame, templates:PixelFrame):BuffMatch[]{
       for(const candidate of proposals)for(let dy=-step;dy<=step;dy++)for(let dx=-step;dx<=step;dx++){
         const x=candidate.x+dx,y=candidate.y+dy
         if(x<0||y<0||x+size>frame.width||y+size>frame.height)continue
-        const full=score(frame,templates,tile,x,y,size,true),edge=edgeScore(frame,templates,tile,x,y,size)
-        const fullMatch=full>=.86&&full-score(frame,templates,tile+2,x,y,size,true)>=.012
-        const partialMatch=edge>=.91&&edge-edgeScore(frame,templates,tile+2,x,y,size)>=.02
+        const full=classScore(frame,templates,positives,x,y,size),edge=classScore(frame,templates,positives,x,y,size,true)
+        const fullMatch=full>=.86&&full-classScore(frame,templates,negatives,x,y,size)>=.012
+        const partialMatch=edge>=.91&&edge-classScore(frame,templates,negatives,x,y,size,true)>=.02
         const value=Math.max(fullMatch?full:0,partialMatch?edge-.01:0)
         if(!value||best&&value<=best.score)continue
         if(!fullMatch&&!recognizeBuffTime(frame,{x,y,size},BUFF_DIGIT_MODEL))continue
@@ -99,8 +107,38 @@ export function clusterBuffAlerts(items:BuffAlertItem[],now:number,notified:Set<
  * its centre. A position alone is never enough to keep a target alive. */
 export function verifyBuffEdges(frame:PixelFrame,templates:PixelFrame,match:BuffMatch):boolean{
   const tile=match.target==='potion'?0:1
-  const value=edgeScore(frame,templates,tile,match.x,match.y,match.size)
-  return value>=.86&&value-edgeScore(frame,templates,tile+2,match.x,match.y,match.size)>=.012
+  const {x,y,size}=match,positives=positiveTiles(tile),negatives=negativeTiles(tile)
+  const full=classScore(frame,templates,positives,x,y,size),edge=classScore(frame,templates,positives,x,y,size,true)
+  if(full>=.86&&full-classScore(frame,templates,negatives,x,y,size)>=.012)return true
+  return edge>=.91&&edge-classScore(frame,templates,negatives,x,y,size,true)>=.02&&recognizeBuffTime(frame,match,BUFF_DIGIT_MODEL)!==null
+}
+
+/** White lower-left minute labels rule out an ending-soon yellow seconds clock. */
+export function hasWhiteMinuteLabel(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|'size'>):boolean{
+  const {x:ox,y:oy,size}=match,reach=Math.max(1,Math.round(size/32))
+  let contrast=0
+  for(let y=Math.floor(size*.64);y<Math.floor(size*.98);y++)for(let x=Math.floor(size*.02);x<Math.floor(size*.34);x++){
+    const px=ox+x,py=oy+y
+    if(px<0||py<0||px>=frame.width||py>=frame.height)continue
+    const i=(py*frame.width+px)*4,r=frame.data[i],g=frame.data[i+1],b=frame.data[i+2]
+    if(Math.min(r,g,b)<190||Math.max(r,g,b)-Math.min(r,g,b)>60)continue
+    let dark=false
+    for(let dy=-reach;dy<=reach&&!dark;dy++)for(let dx=-reach;dx<=reach;dx++){
+      const xx=px+dx,yy=py+dy
+      if(xx<0||yy<0||xx>=frame.width||yy>=frame.height)continue
+      const n=(yy*frame.width+xx)*4
+      if(Math.max(frame.data[n],frame.data[n+1],frame.data[n+2])<85){dark=true;break}
+    }
+    if(dark)contrast++
+  }
+  return contrast>=Math.max(4,size*size*.003)
+}
+export interface BuffIdentity {candidate:BuffMatch|null;frames:number}
+export function advanceBuffIdentity(previous:BuffIdentity,found:BuffMatch|null):BuffIdentity{
+  if(!found)return {candidate:null,frames:0}
+  const old=previous.candidate
+  const same=old&&old.target===found.target&&Math.min(old.size,found.size)/Math.max(old.size,found.size)>=.72&&Math.hypot(old.x+old.size/2-found.x-found.size/2,old.y+old.size/2-found.y-found.size/2)<=Math.max(old.size,found.size)*.3
+  return {candidate:found,frames:same?Math.min(2,previous.frames+1):1}
 }
 
 export interface DigitModel {digit:string;aspect:number;mask:number[]}
@@ -131,6 +169,8 @@ export function recognizeBuffTime(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|
     return Math.abs((upper.x+upper.width/2)-(lower.x+lower.width/2))<=size*.04&&gap>=size*.07&&gap<=size*.2&&upper.y>=size*.33&&lower.y+lower.height<=size*.7 ? [(upper.x+lower.x+upper.width/2+lower.width/2)/2] : []
   }))
   if(separators.length>1)return null
+  const whiteMinutes=hasWhiteMinuteLabel(frame,match)
+  if(whiteMinutes&&!separators.length)return null
   // Each font has its own text band. A wider band for the large overlay must
   // not introduce gold icon artwork into the legacy seconds-only reading.
   let best:BuffTimeReading|null=null
@@ -159,6 +199,7 @@ export function recognizeBuffTime(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|
       if(glyphs.length>3)continue
       reading={seconds:Number(text),display:`${Number(text)}초`,format:'seconds',score:quality}
     }
+    if(whiteMinutes&&reading.seconds<=59)continue
     if(!best||reading.score>best.score)best=reading
   }
   return best
