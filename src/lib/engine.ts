@@ -24,6 +24,7 @@ export interface TimerOptions {
   expIdleSec: number
   hasSource?: boolean
   exp?: ExpObservation
+  buff?: {valid:boolean;expiresAt:number|null;lastReadAt:number|null;detail:string;error?:string}
   rune?: { present: boolean; score: number | null; frameError?: string | null }
 }
 
@@ -42,6 +43,13 @@ export function timerRuntime(monitor: Monitor, lastEventAt: number | null, nowMs
     return options.rune.present
       ? { ...base, status: 'detected', detail: '룬 후보 아이콘 감지 · 색상·모양 기반 실험' }
       : { ...base, status: 'watching', detail: '미니맵 마름모 아이콘 감시 중 · 실험' }
+  }
+  if (monitor.buffTarget) {
+    const buff=options.buff
+    if(buff?.error)return {...base,status:'error',detail:buff.error}
+    if(!buff?.valid||buff.expiresAt===null||buff.lastReadAt===null||nowMs-buff.lastReadAt>4000)return {...base,status:'waiting',detail:buff?.detail??'버프 아이콘 감시 대기 중'}
+    const remainingSec=Math.max(0,(buff.expiresAt-nowMs)/1000)
+    return {...base,remainingSec,lastEventAt:buff.expiresAt,status:remainingSec<=0?'expired':remainingSec<=monitor.warnBeforeSec?'warning':'running',detail:buff.detail}
   }
   if (monitor.kind !== 'exp') return { ...base, status: 'no-sample', detail: '실제 인식용 샘플이 없습니다 · 자동 감지 준비 중' }
 

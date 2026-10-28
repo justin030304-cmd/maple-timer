@@ -966,3 +966,74 @@ test('real detections use rune speech and EXP dingdong independently and master 
   expect(await page.evaluate(()=>window.__tones!.length)).toBe(0)
   expect(await page.evaluate(()=>window.__spoken!.length)).toBe(1)
 })
+
+test('buff matcher distinguishes supplied potion and union icons and the digit model reads the reference countdown',async({page})=>{
+  await page.route('**/buff-minute-strip.png',r=>r.fulfill({path:'tests/fixtures/buff-minute-strip.png',contentType:'image/png'}))
+  await page.route('**/buff-seconds-strip.png',r=>r.fulfill({path:'tests/fixtures/buff-seconds-strip.png',contentType:'image/png'}))
+  await page.goto('/')
+  const result=await page.evaluate(async()=>{
+    // Real, cropped reference frames; no fabricated confidence or OCR result.
+    const {matchBuffs,recognizeBuffDigits}=await import('/src/lib/'+'buffs.ts') as typeof import('../src/lib/buffs')
+    const {BUFF_DIGIT_MODEL}=await import('/src/lib/'+'buffDigitModel.ts') as typeof import('../src/lib/buffDigitModel')
+    const load=async(url:string)=>{const img=new Image();img.src=url;await img.decode();return img}
+    const template=await load('/src/assets/buff-targets.png'),minutes=await load('/buff-minute-strip.png'),seconds=await load('/buff-seconds-strip.png')
+    const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d')!
+    canvas.width=template.width;canvas.height=template.height;ctx.drawImage(template,0,0);const model=ctx.getImageData(0,0,canvas.width,canvas.height)
+    const matches=[]
+    for(let n=0;n<3;n++){canvas.width=500;canvas.height=160;ctx.drawImage(minutes,0,n*160,500,160,0,0,500,160);{const frame=ctx.getImageData(0,0,500,160),found=matchBuffs(frame,model);matches.push(found.map(item=>({...item,seconds:recognizeBuffDigits(frame,item,BUFF_DIGIT_MODEL)?.number??null})))}}
+    const readings=[]
+    for(let n=0;n<13;n++){canvas.width=44;canvas.height=44;ctx.drawImage(seconds,n*44,0,44,44,0,0,44,44);readings.push(recognizeBuffDigits(ctx.getImageData(0,0,44,44),{x:0,y:0,size:44},BUFF_DIGIT_MODEL)?.number??null)}
+    return {matches,readings}
+  })
+  for(const matches of result.matches){
+    expect(matches.map(m=>m.target)).toEqual(['potion','union-wealth'])
+    expect(Math.abs(matches[0].x-287)).toBeLessThan(6)
+    expect(Math.abs(matches[1].x-447)).toBeLessThan(6)
+    expect(matches.every(item=>item.seconds===null)).toBe(true)
+  }
+  expect(result.readings).toEqual([60,53,46,39,32,25,18,11,9,8,7,6,5])
+})
+
+test('two tracked buffs group into one ten-second alert and losing the shared source suppresses further alerts',async({page})=>{
+  test.setTimeout(40_000)
+  await mockCapture(page);await mockSpeech(page)
+  await page.addInitScript(({key,settings})=>localStorage.setItem(key,JSON.stringify({version:1,settings})),{key:SETTINGS_KEY,settings:{...DEFAULT_SETTINGS,monitors:DEFAULT_SETTINGS.monitors.map(m=>({...m,enabled:false}))}})
+  await page.goto('/')
+  await page.getByRole('button',{name:'소리 알림 활성화',exact:true}).click()
+  await beginCapture(page)
+  await page.evaluate(async()=>{
+    const {BUFF_DIGIT_MODEL}=await import('/src/lib/'+'buffDigitModel.ts') as typeof import('../src/lib/buffDigitModel')
+    const sprite=new Image();sprite.src='/src/assets/buff-targets.png';await sprite.decode()
+    const capture=window.__capture!,ctx=capture.canvas.getContext('2d')!,start=Date.now()
+    const draw=()=>{
+      ctx.fillStyle='#151e19';ctx.fillRect(0,0,1280,720)
+      for(const [index,x,initial] of [[0,900,14],[1,1040,16]]){
+        const seconds=Math.max(0,initial-Math.floor((Date.now()-start)/1000)),y=80
+        ctx.imageSmoothingEnabled=false;ctx.drawImage(sprite,index*32,0,32,32,x,y,44,44)
+        ctx.fillStyle='#181818';ctx.fillRect(x+7,y+13,32,22)
+        const digits=String(seconds).split('').map(digit=>BUFF_DIGIT_MODEL.find(m=>m.digit===digit)!)
+        const widths=digits.map(d=>Math.round(d.aspect*14));let left=x+22-(widths.reduce((a,b)=>a+b,0)+(digits.length-1)*3)/2
+        for(let d=0;d<digits.length;d++){
+          const model=digits[d],width=widths[d];ctx.fillStyle='#dce489'
+          for(let gy=0;gy<14;gy++)for(let gx=0;gx<width;gx++)if(model.mask[Math.floor((gy+.5)*16/14)*10+Math.min(9,Math.floor((gx+.5)*10/width))])ctx.fillRect(Math.round(left)+gx,y+16+gy,1,1)
+          left+=width+3
+        }
+      }
+      capture.track.requestFrame?.()
+    }
+    draw();window.__experienceAnimation=window.setInterval(draw,180)
+  })
+  await page.getByRole('button',{name:'비약·유니온의 부 등록',exact:true}).click()
+  const potion=card(page,'비약'),union=card(page,'유니온의 부')
+  await expect(potion.locator('.timer-digits')).toHaveText(/^00:/,{timeout:15000})
+  await expect(union.locator('.timer-digits')).toHaveText(/^00:/,{timeout:15000})
+  const grouped=page.locator('.activity-row').filter({hasText:'비약, 유니온의 부 곧 종료됩니다.'})
+  await expect(grouped).toHaveCount(1,{timeout:15000})
+  await expect.poll(()=>page.evaluate(()=>window.__spoken!.filter(item=>item.text==='비약, 유니온의 부 곧 종료됩니다.').length)).toBe(1)
+  await page.waitForTimeout(2500)
+  await expect(grouped).toHaveCount(1)
+  await page.getByRole('button',{name:'공유 종료',exact:true}).click()
+  await expect(potion.locator('.timer-digits')).toHaveText('--:--')
+  await page.waitForTimeout(1200)
+  await expect(grouped).toHaveCount(1)
+})

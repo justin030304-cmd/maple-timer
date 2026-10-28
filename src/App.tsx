@@ -1,3 +1,5 @@
+import { useBuffDetection } from './hooks/useBuffDetection';
+import { BUFF_NAMES } from './lib/buffs';
 import { readMonitorAudio } from './lib/monitorAudio';
 import RegionThumbnail from './components/RegionThumbnail';
 import RegionSelector from './components/RegionSelector';
@@ -148,6 +150,21 @@ export default function App() {
 
   const experience = useExperienceDetection({ stream, videoRef, monitor: expMonitor, mode: settings.expDetectionMode });
 
+  const onBuffAlert = useCallback((group: Monitor[]) => {
+    const message = `${group.map(m => m.name).join(', ')} 곧 종료됩니다.`;
+    log(message, 'warning'); notify(message);
+    const audible = group.find(m => readMonitorAudio(m.audio, 'buff').sound !== 'silent' && readMonitorAudio(m.audio, 'buff').volume > 0);
+    if (audible) void speakAlert(message, audible);
+  }, [log, notify, speakAlert]);
+  const buffObservations = useBuffDetection({ stream, videoRef, monitors: settings.monitors, onAlert: onBuffAlert });
+  const registerTargetBuffs = () => {
+    if (settings.monitors.length >= 50) { notify('모듈은 최대 50개까지 등록할 수 있습니다.'); return; }
+    setSettings(current => {
+      const additions = (['potion', 'union-wealth'] as const).filter(target => !current.monitors.some(m => m.buffTarget === target)).map(target => ({id:`buff-${crypto.randomUUID()}`,name:BUFF_NAMES[target],kind:'buff' as const,buffTarget:target,enabled:true,roi:{x:.5,y:0,width:.5,height:.5},durationSec:60,warnBeforeSec:10}));
+      return {...current,monitors:[...current.monitors,...additions].slice(0,50)};
+    });
+  };
+
   const [experienceRegionError, setExperienceRegionError] = useState('');
   const findExperienceRegion = useCallback(() => {
     const video = videoRef.current;
@@ -176,9 +193,11 @@ export default function App() {
     hasSource: !!stream,
     exp: monitor.kind === 'exp' ? experience.observation : undefined,
     rune: monitor.kind === 'rune' ? runeObservation : undefined,
+    buff: monitor.buffTarget && buffObservations[monitor.id] ? { ...buffObservations[monitor.id].clock, detail: buffObservations[monitor.id].detail, error: buffObservations[monitor.id].error } : undefined,
   })]));
   useEffect(() => {
     for (const monitor of settings.monitors) {
+      if (monitor.buffTarget) continue;
       const runtime = runtimes[monitor.id];
       const shouldAlert = monitor.kind === 'exp' ? runtime.status === 'expired' : runtime.status === 'warning' || runtime.status === 'expired';
       const token = `${runtime.lastEventAt}:${runtime.status}:${monitor.kind === 'exp' ? settings.expIdleSec : monitor.durationSec}`;
@@ -215,14 +234,14 @@ export default function App() {
     const watching = runtime.status === 'watching';
     const statusLabel = !monitor.enabled ? '비활성화'
       : detected ? '룬 후보 감지' : watching ? '아이콘 감시 중'
-      : runtime.status === 'running' ? '숫자 감시 중'
+      : runtime.status === 'running' ? monitor.buffTarget ? '종료 추적 중' : '숫자 감시 중'
       : runtime.status === 'warning' ? '종료 임박' : runtime.status === 'expired' ? '알림 발생'
       : runtime.status === 'no-sample' ? '샘플 필요' : runtime.status === 'error' ? monitor.kind === 'exp' ? '인식 실패' : '분석 실패' : '대기 중';
     const digits = !monitor.enabled ? 'OFF'
       : isRune ? detected ? '발견' : watching ? '감시 중' : runtime.status === 'error' ? '확인 필요' : '대기'
       : activeTimer ? formatTime(runtime.remainingSec) : '--:--';
     const percentage = isRune ? detected ? 100 : 0
-      : monitor.enabled && activeTimer ? Math.max(0, Math.min(100, runtime.remainingSec / (monitor.kind === 'exp' ? settings.expIdleSec : monitor.durationSec) * 100)) : 0;
+      : monitor.enabled && activeTimer ? Math.max(0, Math.min(100, runtime.remainingSec / (monitor.kind === 'exp' ? settings.expIdleSec : monitor.buffTarget ? 59 : monitor.durationSec) * 100)) : 0;
     return <div className={`monitor-item kind-${monitor.kind} ${!monitor.enabled ? 'disabled' : ''}`} key={monitor.id}>
       <div className="monitor-row">
         <button className="monitor-name" onClick={() => setExpandedId(expanded ? null : monitor.id)} aria-expanded={expanded}>
@@ -237,7 +256,7 @@ export default function App() {
       <div className="row-rule"><span>{monitor.kind === 'exp' ? '알림 기준' : isRune ? '감지 방식' : '알림 시점'}</span><strong>{monitor.kind === 'exp' ? `${settings.expIdleSec}초 무변동` : isRune ? '마름모 아이콘' : `${monitor.warnBeforeSec}초 전`}</strong></div><div className="timer-track"><span className={meta.className} style={{ width: `${percentage}%` }} /></div>
       <div className={`monitor-bottom ${stream && monitor.roi && monitor.kind !== 'exp' ? 'with-thumbnail' : ''}`}>
         <button className={`roi-link ${monitor.roi ? 'configured' : ''}`} onClick={() => { if (stream) setRegionMonitorId(monitor.id); else { setEditingId(monitor.id); notify('화면 공유를 시작한 뒤 영역을 선택해 주세요.'); } }}><Crosshair size={14} />{editingId === monitor.id ? '영역 지정 중' : monitor.roi ? '인식 영역 수정' : monitor.kind === 'rune' ? '미니맵 영역 선택' : monitor.kind === 'exp' ? '경험치 바 영역 선택' : '인식 영역 지정'}</button>
-        <span>{isRune ? '색상·모양 · 실험' : monitor.kind === 'exp' ? settings.expDetectionMode === 'visual' ? '숫자 모양 · 실험' : '숫자 OCR · 실험' : '자동 인식 준비 중'}</span>
+        <span>{isRune ? '색상·모양 · 실험' : monitor.kind === 'exp' ? settings.expDetectionMode === 'visual' ? '숫자 모양 · 실험' : '숫자 OCR · 실험' : monitor.buffTarget ? '아이콘 분류 · 초 숫자 추적' : '자동 인식 준비 중'}</span>
         {stream && monitor.roi && monitor.kind !== 'exp' && <RegionThumbnail videoRef={videoRef} roi={monitor.roi} label={`${monitor.name} 감시 영역 미리보기`} />}
       </div>
       {stream && monitor.roi && monitor.kind === 'exp' && monitor.enabled && <div className="monitor-crop wide-crop"><RegionThumbnail videoRef={videoRef} roi={monitor.roi} label={`${monitor.name} 감시 영역 미리보기`} /></div>}
@@ -253,6 +272,7 @@ export default function App() {
         setSettings((current) => ({ ...current, soundEnabled: true }));
         void preview();
       }}><Volume2 size={15} />룬 알림 소리 켜기</button>}
+      {monitor.buffTarget && <div className="experience-reading"><span>{buffObservations[monitor.id]?.detail ?? '화면 오른쪽 위 버프 목록 감시'}</span>{buffObservations[monitor.id]?.number != null && <strong>최근 숫자: {buffObservations[monitor.id].number}</strong>}{buffObservations[monitor.id]?.error && <p className="experience-error">{buffObservations[monitor.id].error}</p>}</div>}
       {expanded && <div className="monitor-settings">
         <div className="monitor-audio-settings">
           <div className="monitor-audio-heading"><Volume2 size={17} /><strong>이 알림의 소리</strong><button className="button small" disabled={testing || audio.sound === 'silent'} onClick={() => void preview(monitor)}>{testing ? '재생 대기 중…' : '소리 미리 듣기'}</button></div>
@@ -260,6 +280,7 @@ export default function App() {
           {audio.sound === 'speech' && <div className="field-pair"><label>읽어 줄 문구<input aria-label={`${monitor.name} 읽어 줄 문구`} maxLength={200} value={audio.speechText} placeholder="비워 두면 감지 내용을 읽습니다" onChange={event => updateMonitor(monitor.id, { audio: { ...audio, speechText: event.target.value } })} /></label><label>알림 음성<select aria-label={`${monitor.name} 알림 음성`} value={audio.voiceURI} onChange={event => updateMonitor(monitor.id, { audio: { ...audio, voiceURI: event.target.value } })}><option value="">한국어 여성 음성 우선 · 자동</option>{audio.voiceURI && !voices.some(voice => voice.voiceURI === audio.voiceURI) && <option value={audio.voiceURI}>저장된 음성 · 이 기기에서 사용 불가</option>}{voices.map(voice => <option key={voice.voiceURI} value={voice.voiceURI}>{voice.name}</option>)}</select></label></div>}
           <p>개별 음량에 공통 음량을 곱해 재생합니다. 전체 음소거는 모든 알림에 적용됩니다.</p>
         </div>
+        {monitor.kind === 'buff' && <><label>인식할 버프<select aria-label={`${monitor.name} 인식할 버프`} value={monitor.buffTarget ?? ''} onChange={event => { const target=event.target.value as 'potion'|'union-wealth'; updateMonitor(monitor.id,{buffTarget:target||undefined,...(target ? {roi:monitor.roi??{x:.5,y:0,width:.5,height:.5},durationSec:60,warnBeforeSec:10} : {})}); }}><option value="">사용자 등록 버프 · 자동 인식 준비 중</option><option value="potion">비약 · 샘플 기반</option><option value="union-wealth">유니온의 부 · 샘플 기반</option></select></label>{monitor.buffTarget && <p>오른쪽 위 버프 목록에서 아이콘을 찾습니다. 노란 초 숫자가 59 이하이고 실제로 두 번 감소한 것을 확인해야 추적합니다. 종료 예상 시각이 3초 이내인 버프는 한 번으로 묶어 알립니다.</p>}</>}
         {monitor.kind === 'buff' && <label>버프 이름<input aria-label="버프 이름" maxLength={40} value={monitor.name} onChange={(event) => updateMonitor(monitor.id, { name: event.target.value })} /></label>}
         {isRune ? <div className="rune-settings">
           <p>미니맵 부분을 인식 영역으로 지정해 주세요. 설명용 빨간 테두리가 아니라 안쪽의 보라·하늘색 또는 흰 테두리의 보라색 마름모를 찾습니다.</p>
@@ -279,13 +300,13 @@ export default function App() {
           <p>3프레임 연속 확인되면 한 번 알립니다. 2초 이상 사라져야 다시 감지하며, 알림 간격은 최소 10초입니다. 해상도·색상·겹치는 표시에 따라 오탐·누락이 있을 수 있습니다.</p>
           {events[monitor.id] != null && <p>마지막 알림: {new Date(events[monitor.id]!).toLocaleTimeString('ko-KR', { hour12: false })}</p>}
         </div> : <div className="field-pair">
-          <label>{monitor.kind === 'exp' ? '변화 없음 경고 (초)' : '지속 시간 (초)'}<input type="number" min={monitor.kind === 'exp' ? 5 : 1} max={monitor.kind === 'exp' ? 3600 : 86400} value={monitor.kind === 'exp' ? settings.expIdleSec : monitor.durationSec} onChange={(event) => {
+          {!monitor.buffTarget && <label>{monitor.kind === 'exp' ? '변화 없음 경고 (초)' : '지속 시간 (초)'}<input type="number" min={monitor.kind === 'exp' ? 5 : 1} max={monitor.kind === 'exp' ? 3600 : 86400} value={monitor.kind === 'exp' ? settings.expIdleSec : monitor.durationSec} onChange={(event) => {
             const value = Number(event.target.value);
             if (!Number.isFinite(value)) return;
             if (monitor.kind === 'exp') setSettings((current) => ({ ...current, expIdleSec: Math.max(5, Math.min(3600, value)) }));
             else updateMonitor(monitor.id, { durationSec: Math.max(1, Math.min(86400, value)), warnBeforeSec: Math.max(0, Math.min(monitor.warnBeforeSec, value)) });
-          }} /></label>
-          {monitor.kind !== 'exp' && <label>미리 알림 (초)<input type="number" min={0} max={monitor.durationSec} value={monitor.warnBeforeSec} onChange={(event) => updateMonitor(monitor.id, { warnBeforeSec: Math.max(0, Math.min(monitor.durationSec, Number(event.target.value))) })} /></label>}
+          }} /></label>}
+          {monitor.kind !== 'exp' && <label>미리 알림 (초)<input type="number" min={0} max={monitor.buffTarget ? 59 : monitor.durationSec} value={monitor.warnBeforeSec} onChange={(event) => updateMonitor(monitor.id, { warnBeforeSec: Math.max(0, Math.min(monitor.buffTarget ? 59 : monitor.durationSec, Number(event.target.value))) })} /></label>}
         </div>}
         <p>{runtime.detail}</p>
         {monitor.kind === 'exp' && <div className="experience-settings">
@@ -353,7 +374,7 @@ export default function App() {
                 <p>공유 화면의 비율로 저장됩니다. 창 크기나 해상도가 바뀌면 영역을 다시 확인해 주세요.</p>
               </div>}
             </section>
-            <div className="recognition-notice"><ShieldCheck size={23} /><div><strong>화면 인식 기능 안내</strong><p>룬은 지정한 미니맵에서 보라·하늘색 또는 흰 테두리의 보라색 마름모를 찾는 실험 감지입니다. 버프·부스터는 준비 중이며, 경험치는 숫자 모양 변화 감시와 OCR 중 선택할 수 있습니다. 실제 판독값을 확인해 주세요.</p></div></div>
+            <div className="recognition-notice"><ShieldCheck size={23} /><div><strong>화면 인식 기능 안내</strong><p>룬은 지정한 미니맵에서 보라·하늘색 또는 흰 테두리의 보라색 마름모를 찾는 실험 감지입니다. 비약·유니온의 부는 샘플 기반 실험 감지이며, 다른 버프·부스터는 준비 중입니다. 경험치는 숫자 모양 변화 감시와 OCR 중 선택할 수 있습니다. 실제 판독값을 확인해 주세요.</p></div></div>
             <section className="panel activity-panel">
               <div className="panel-heading"><div><AudioLines size={18} /><h2>활동 기록</h2><span className="count-badge">{logs.length}</span></div><button className="text-button" onClick={() => setLogs([])} disabled={!logs.length}>기록 지우기</button></div>
               <div className="activity-list" aria-live="polite">{logs.length ? logs.slice(0, 4).map((entry) => <div className="activity-row" key={entry.id}><span className={`log-dot ${entry.tone}`} /><time>{new Date(entry.time).toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><p>{entry.message}</p></div>) : <p className="empty-log">아직 기록이 없습니다. 감지 이벤트가 이곳에 표시됩니다.</p>}</div>
@@ -362,7 +383,7 @@ export default function App() {
           <aside className="modules-column"><div className="modules-heading"><h2>나의 알림 <span>{activeCount}</span></h2><span>각각 독립적으로 작동해요</span></div>{(['rune', 'exp', 'buff', 'booster'] as const).map((kind) => {
             const meta = moduleMeta[kind];
             const Icon = meta.icon;
-            return <section className={`panel module-panel ${meta.className}`} key={kind}><div className="module-heading"><span className={`module-icon ${meta.className}`}><Icon size={20} /></span><div><h3>{meta.title}</h3><p>{meta.sub}</p></div>{kind === 'buff' && <button className="icon-button add-buff" aria-label="새 버프 추가" onClick={addBuff}><Plus size={20} /></button>}</div>{settings.monitors.filter((monitor) => monitor.kind === kind).map(renderMonitor)}{kind === 'buff' && !settings.monitors.some((monitor) => monitor.kind === 'buff') && <button className="button empty-buff" onClick={addBuff}><Plus size={17} />첫 버프 등록하기</button>}</section>;
+            return <section className={`panel module-panel ${meta.className}`} key={kind}><div className="module-heading"><span className={`module-icon ${meta.className}`}><Icon size={20} /></span><div><h3>{meta.title}</h3><p>{meta.sub}</p></div>{kind === 'buff' && !(['potion','union-wealth'] as const).every(target=>settings.monitors.some(m=>m.buffTarget===target)) && <button className="button small" onClick={registerTargetBuffs}>비약·유니온의 부 등록</button>}{kind === 'buff' && <button className="icon-button add-buff" aria-label="새 버프 추가" onClick={addBuff}><Plus size={20} /></button>}</div>{settings.monitors.filter((monitor) => monitor.kind === kind).map(renderMonitor)}{kind === 'buff' && !settings.monitors.some((monitor) => monitor.kind === 'buff') && <button className="button empty-buff" onClick={addBuff}><Plus size={17} />첫 버프 등록하기</button>}</section>;
           })}</aside>
         </div>
         <footer><span><ShieldCheck size={16} />게임 메모리 접근 없이, 화면만 살펴봅니다.</span><span>나만의 페이스, 나만의 메이플.<Leaf size={15} /></span></footer>
@@ -394,7 +415,7 @@ export default function App() {
           <li><span>01</span><div><strong>화면 공유하기</strong><p>‘화면 공유 시작’을 눌러 게임 창이나 화면을 선택하세요. HTTPS 또는 localhost가 필요하며, 게임 창을 최소화하면 프레임이 멈출 수 있어요.</p></div></li>
           <li><span>02</span><div><strong>모듈별 인식 영역 지정하기</strong><p>룬 영역은 미니맵 부분에 좁게 맞춰 주세요. 화면 전체를 지정하면 작은 아이콘을 놓칠 수 있습니다. 영역 안을 드래그해 이동하거나 수치로 정밀하게 수정할 수 있습니다.</p></div></li>
           <li><span>03</span><div><strong>경험치 숫자 영역 지정하기</strong><p>하단 연두색 바의 흰 경험치 숫자를 포함해 주세요. 작은 글자는 숫자 모양 감시를 사용하고, OCR 모드에서는 판독값을 확인하세요. 변화 없음 경고 시간을 설정하세요. 읽기 실패 중에는 알림을 울리지 않습니다.</p></div></li>
-          <li><span>04</span><div><strong>알림 목소리 선택하기</strong><p>알림 설정에서 한국어 여성 음성을 선택하고 테스트 버튼을 눌러 주세요. 룬은 미니맵 마름모 아이콘을 실험적으로 감지하며, 버프·부스터 자동 인식은 아직 준비 중입니다.</p></div></li>
+          <li><span>04</span><div><strong>알림 목소리 선택하기</strong><p>알림 설정에서 한국어 여성 음성을 선택하고 테스트 버튼을 눌러 주세요. 룬은 미니맵 마름모 아이콘을 실험적으로 감지하며, 비약·유니온의 부는 버프 영역에서 샘플 기반으로 감지하고, 다른 버프·부스터는 준비 중입니다.</p></div></li>
         </ol>
         <div className="setting-note"><ShieldCheck size={23} /><p>영상은 브라우저 메모리에서만 처리합니다. 게임 메모리 접근, 자동 키 입력, 게임 조작 기능은 없습니다.</p></div>
       </>}

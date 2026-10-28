@@ -23,6 +23,7 @@ export interface Monitor {
   roi: ROI | null
   durationSec: number
   warnBeforeSec: number
+  buffTarget?: 'potion' | 'union-wealth'
   audio?: MonitorAudio
 }
 
