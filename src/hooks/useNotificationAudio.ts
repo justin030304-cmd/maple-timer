@@ -1,3 +1,4 @@
+import { scheduleNotificationTones } from '../lib/notificationTones';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { resolveMonitorAudio } from '../lib/monitorAudio';
 import type { Monitor, Settings } from '../types';
@@ -10,7 +11,6 @@ export function useNotificationAudio(settings: Settings, notify: (message: strin
   const [testing, setTesting] = useState(false);
   const speechRef = useRef<SpeechNotifier | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
-  const outputRef = useRef<DynamicsCompressorNode | null>(null);
   const unlocked = useRef(false);
   const audioEpoch = useRef(0);
   const oscillators = useRef(new Set<OscillatorNode>());
@@ -54,7 +54,6 @@ export function useNotificationAudio(settings: Settings, notify: (message: strin
       speechRef.current = null;
       void contextRef.current?.close();
       contextRef.current = null;
-      outputRef.current = null;
     };
   }, []);
 
@@ -73,32 +72,12 @@ export function useNotificationAudio(settings: Settings, notify: (message: strin
       unlocked.current = true;
       setAudioReady(true);
       if (volume === 0) return true;
-      // Share headroom between overlapping alert tones at the louder level.
-      if (!outputRef.current) {
-        const output = context.createDynamicsCompressor();
-        output.threshold.value = -3; output.knee.value = 3; output.ratio.value = 12;
-        output.attack.value = .002; output.release.value = .15;
-        output.connect(context.destination); outputRef.current = output;
+      const nodes = scheduleNotificationTones(context, kind, volume, settingsRef.current.alertBoost);
+      for (const oscillator of nodes) {
+        oscillators.current.add(oscillator);
+        const cleanup = oscillator.onended;
+        oscillator.onended = (event) => { oscillators.current.delete(oscillator); cleanup?.call(oscillator, event); };
       }
-      const output = outputRef.current;
-      const start = context.currentTime;
-      const frequencies = kind === 'dingdong' ? [880, 659.25] : [659.25, 880, 987.77];
-      frequencies.forEach((frequency, index) => {
-        const at = start + index * (kind === 'dingdong' ? .34 : .16);
-        const duration = kind === 'dingdong' ? .65 : .25;
-        const partials = kind === 'dingdong' ? [1, 2] : [1];
-        partials.forEach(partial => {
-          const oscillator = context.createOscillator(), gain = context.createGain();
-          oscillator.type = 'sine'; oscillator.frequency.value = frequency * partial;
-          gain.gain.setValueAtTime(0, at);
-          gain.gain.linearRampToValueAtTime(Math.max(.0001, volume * (partial === 1 ? .55 : .11)), at + .012);
-          gain.gain.exponentialRampToValueAtTime(.0001, at + duration - .01);
-          oscillator.connect(gain); gain.connect(output);
-          oscillators.current.add(oscillator);
-          oscillator.start(at); oscillator.stop(at + duration);
-          oscillator.onended = () => { oscillators.current.delete(oscillator); oscillator.disconnect(); gain.disconnect(); };
-        });
-      });
       return true;
     } catch {
       if (mounted.current) notify('알림음을 재생할 수 없습니다. 브라우저의 소리 권한을 확인해 주세요.');
@@ -113,6 +92,13 @@ export function useNotificationAudio(settings: Settings, notify: (message: strin
     if (profile.sound === 'silent') return false;
     if (profile.sound === 'chime' || profile.sound === 'dingdong') return chime(profile.sound, profile.volume);
     const epoch = audioEpoch.current;
+    let leadInPlayed = false;
+    if (current.speechLeadIn) {
+      leadInPlayed = await chime('chime', profile.volume);
+      // Let the attention tone finish so it does not cover the spoken words.
+      if (leadInPlayed && profile.volume > 0) await new Promise<void>(resolve => window.setTimeout(resolve, 1150));
+      if (!mounted.current || epoch !== audioEpoch.current || (!force && !settingsRef.current.soundEnabled)) return false;
+    }
     speechRef.current ??= new SpeechNotifier();
     let fallback: Promise<boolean> | null = null;
     const useFallback = (reason: string) => {
@@ -120,7 +106,7 @@ export function useNotificationAudio(settings: Settings, notify: (message: strin
       setTesting(false);
       setVoiceError(reason);
       if (!force && !settingsRef.current.soundEnabled) return;
-      fallback ??= chime('chime', profile.volume);
+      fallback ??= leadInPlayed ? Promise.resolve(true) : chime('chime', profile.volume);
     };
     const accepted = speechRef.current.say(profile.text, {
       volume: profile.volume,

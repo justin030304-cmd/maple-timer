@@ -420,3 +420,6 @@ main { max-width: 1308px; padding: 25px 24px 90px; }
 .monitor-audio-settings { padding-bottom: 18px; margin-bottom: 18px; border-bottom: 1px solid #dfe9e2; }
 .monitor-audio-heading { display: flex; align-items: center; gap: 8px; color: #3a7052; }.monitor-audio-heading strong { font-size: 14px; }.monitor-audio-heading .button { margin-left: auto; }.monitor-audio-settings .field-pair { max-width: 880px; }.monitor-audio-settings select { display: block; margin-top: 6px; }.monitor-audio-settings input[type=range] { height: 35px; }
 @media(max-width:650px) { .monitor-audio-settings .field-pair { flex-direction: column; } }
+
+.speech-bell-option { display: flex; align-items: center; gap: 10px; margin-top: 18px; font-size: 16px; color: var(--text, #23382a); }
+.speech-bell-option input { flex: 0 0 auto; width: 18px; height: 18px; accent-color: #427847; }

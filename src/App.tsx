@@ -408,6 +408,10 @@ export default function App() {
           </>}
         </div>
         <label className="volume-label">알림 음량<span>{Math.round(settings.volume * 100)}%</span><div><VolumeX size={18} /><input type="range" min={0} max={1} step={.01} value={settings.volume} onChange={(event) => setSettings((current) => ({ ...current, volume: Number(event.target.value) }))} aria-label="알림 음량" /><Volume2 size={20} /></div></label>
+        <label className="volume-label">벨소리 추가 증폭<span>{settings.alertBoost.toFixed(1)}×</span><div><Volume2 size={18} /><input type="range" min={1} max={4} step={.5} value={settings.alertBoost} onChange={event => { stopAudio(); setSettings(current => ({...current,alertBoost:Number(event.target.value)})); }} aria-label="벨소리 추가 증폭" /><Volume2 size={20} /></div></label>
+        <p className="voice-help">벨소리의 지속 시간과 출력을 높입니다. TTS 자체에는 적용되지 않으며, 브라우저 음성은 최대 100%까지 재생할 수 있습니다.</p>
+        <label className="speech-bell-option"><input type="checkbox" checked={settings.speechLeadIn} onChange={event => { stopAudio(); setSettings(current => ({...current,speechLeadIn:event.target.checked})); }} /><span>음성 알림에 강한 벨소리 함께 재생</span></label>
+        <p className="voice-help">TTS가 작게 들리면 이 옵션을 켜 주세요. 기기·Chrome의 음량은 웹사이트에서 변경할 수 없습니다.</p>
         <div className="sound-test"><button className="button primary" disabled={testing} onClick={async () => { if (await preview()) notify('알림 소리 테스트를 요청했습니다. 선택한 목소리를 확인해 주세요.'); }}><Volume2 size={18} />{testing ? '음성 재생 대기 중…' : '알림 소리 테스트'}</button><span className={audioReady ? 'text-green' : ''}>{audioReady ? '소리 사용 준비 완료' : '한 번 눌러 소리를 허용해 주세요'}</span></div>
         {voiceError && <p role="status" className="voice-status">{voiceError}</p>}
         <div className="setting-note"><Bell size={20} /><p>알림 내용을 선택한 목소리로 읽어드립니다. 한국어 음성이 없거나 재생에 실패하면 기본 알림음으로 대신 알립니다. 먼저 테스트 버튼을 눌러 소리를 허용해 주세요.</p></div>

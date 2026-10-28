@@ -179,6 +179,14 @@ describe('persistent settings', () => {
     expect(louder.soundEnabled).toBe(false)
     expect(louder.monitors[0].audio).toEqual(individual.audio)
   })
+  it('bounds and persists amplification and the optional speech bell', () => {
+    const storage=memoryStorage(JSON.stringify({version:1,audioVolumeVersion:1,settings:{...DEFAULT_SETTINGS,alertBoost:99,speechLeadIn:true}}))
+    const settings=loadSettings(storage)
+    expect(settings.alertBoost).toBe(4)
+    expect(settings.speechLeadIn).toBe(true)
+    saveSettings({...settings,alertBoost:1.5,speechLeadIn:false},storage)
+    expect(loadSettings(storage)).toMatchObject({alertBoost:1.5,speechLeadIn:false})
+  })
   it('recovers from corrupted and version-mismatched storage', () => {
     expect(loadSettings(memoryStorage('{'))).toEqual(DEFAULT_SETTINGS)
     expect(loadSettings(memoryStorage(JSON.stringify({ version: 2, settings: {} })))).toEqual(DEFAULT_SETTINGS)

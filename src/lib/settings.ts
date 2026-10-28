@@ -5,6 +5,8 @@ import { normalizeROI } from './roi'
 export const SETTINGS_KEY = 'maple-timer.settings.v1'
 export const DEFAULT_SETTINGS: Settings = {
   volume: 1,
+  alertBoost: 2,
+  speechLeadIn: true,
   soundEnabled: true,
   notificationSound: 'speech',
   voiceURI: '',
@@ -76,6 +78,8 @@ export function loadSettings(storage: StorageLike | null = browserStorage()): Se
       // Apply the louder master level once; preserve explicit zero/mute and
       // every volume the user chooses after this update.
       volume: raw.audioVolumeVersion === 1 || saved.volume === 0 ? bounded(saved.volume, defaults.volume, 0, 1) : 1,
+      alertBoost: bounded(saved.alertBoost, defaults.alertBoost, 1, 4),
+      speechLeadIn: typeof saved.speechLeadIn === 'boolean' ? saved.speechLeadIn : defaults.speechLeadIn,
       soundEnabled: typeof saved.soundEnabled === 'boolean' ? saved.soundEnabled : defaults.soundEnabled,
       notificationSound: saved.notificationSound === 'chime' ? 'chime' : 'speech',
       voiceURI: typeof saved.voiceURI === 'string' ? saved.voiceURI.slice(0, 512) : defaults.voiceURI,

@@ -35,6 +35,8 @@ export interface RuneDetectorSettings {
 
 export interface Settings {
   volume: number
+  alertBoost: number
+  speechLeadIn: boolean
   soundEnabled: boolean
   notificationSound: 'speech' | 'chime'
   voiceURI: string
