@@ -49,7 +49,8 @@ function colourFlags(red: number, green: number, blue: number, alpha: number, mo
  * The red rectangles in the reference are annotations, not part of the icon.
  * Components require narrow tips, wide middle rows, approximate symmetry and a
  * populated centre. Colour alone, square frames and circles are insufficient.
- * No sample screenshot is bundled: these are conservative colour/shape rules.
+ * Recorded minimap crops exercise the white/black/violet outline layout;
+ * these remain experimental colour/shape rules, not measured accuracy.
  */
 export function detectRune(frame: PixelFrame, options: RuneDetectionOptions = DEFAULT_RUNE_OPTIONS): RuneDetection {
   const { width, height, data } = frame
@@ -62,6 +63,7 @@ export function detectRune(frame: PixelFrame, options: RuneDetectionOptions = DE
   const total = width * height
   const colours = new Uint8Array(total)
   const white = new Uint8Array(total)
+  const softWhite = new Uint8Array(total)
   const joined = new Uint8Array(total)
   const labels = new Int32Array(total)
   const queue = new Int32Array(total)
@@ -72,6 +74,7 @@ export function detectRune(frame: PixelFrame, options: RuneDetectionOptions = DE
     colours[index] = colourFlags(red, green, blue, data[offset + 3], options.color)
     const high = Math.max(red, green, blue), low = Math.min(red, green, blue)
     white[index] = Number(data[offset + 3] >= 160 && low >= 165 && high - low < 65)
+    softWhite[index] = Number(data[offset + 3] >= 160 && low >= 145 && high - low < 65)
   }
   // Keep dark gaps intact: expanding all coloured pixels merges small runes
   // with nearby map lines. Bridge only a white pixel between coloured parts.
@@ -123,18 +126,21 @@ export function detectRune(frame: PixelFrame, options: RuneDetectionOptions = DE
     if (aspect < .65 || aspect > 1.5) continue
     const mixedPalette = cyan >= 3 && pink >= 3 && Math.min(cyan, pink) / count >= .06
     let outlinedViolet = false
+    const rimReach = Math.max(2, Math.min(6, Math.ceil(Math.max(markerWidth, markerHeight) / 4)))
     if (options.color !== 'red' && !mixedPalette && pink / count >= .85) {
-      // Some minimap runes have a violet fill and white rim with no cyan.
+      // Real markers can put a black stroke between the violet fill and white
+      // rim. Search beyond that stroke at the observed icon scale, without
+      // joining unrelated coloured map pixels across dark gaps.
       // Require the rim on all four sides; isolated purple map pixels do not qualify.
       let rimLeft = left, rimRight = right, rimTop = top, rimBottom = bottom
       let rim = 0, north = false, south = false, west = false, east = false
-      for (let y = Math.max(0, top - 2); y <= Math.min(height - 1, bottom + 2); y++) {
-        for (let x = Math.max(0, left - 2); x <= Math.min(width - 1, right + 2); x++) {
+      for (let y = Math.max(0, top - rimReach); y <= Math.min(height - 1, bottom + rimReach); y++) {
+        for (let x = Math.max(0, left - rimReach); x <= Math.min(width - 1, right + rimReach); x++) {
           const index = y * width + x
           if (!white[index]) continue
           let adjacent = false
-          for (let dy = Math.max(0, y - 2); dy <= Math.min(height - 1, y + 2) && !adjacent; dy++) {
-            for (let dx = Math.max(0, x - 2); dx <= Math.min(width - 1, x + 2); dx++) {
+          for (let dy = Math.max(0, y - rimReach); dy <= Math.min(height - 1, y + rimReach) && !adjacent; dy++) {
+            for (let dx = Math.max(0, x - rimReach); dx <= Math.min(width - 1, x + rimReach); dx++) {
               const neighbour = dy * width + dx
               if (colours[neighbour] && labels[neighbour] === label) { adjacent = true; break }
             }
@@ -165,8 +171,10 @@ export function detectRune(frame: PixelFrame, options: RuneDetectionOptions = DE
       for (let column = left; column <= right; column++) {
         const index = row * width + column
         let supported = colours[index] !== 0 && labels[index] === label
-        if (!supported && white[index]) {
-          const rimWidth = outlinedViolet ? 2 : 1
+        // Include antialiased grey edge pixels only after a strong white rim
+        // has been confirmed on all four sides of the violet component.
+        if (!supported && (outlinedViolet ? softWhite[index] : white[index])) {
+          const rimWidth = outlinedViolet ? rimReach : 1
           for (let y = Math.max(top, row - rimWidth); y <= Math.min(bottom, row + rimWidth) && !supported; y++) {
             for (let x = Math.max(left, column - rimWidth); x <= Math.min(right, column + rimWidth); x++) {
               const neighbour = y * width + x

@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { PixelFrame } from './analysis'
 import { advanceRuneState, createRuneState, DEFAULT_RUNE_OPTIONS, detectRune } from './rune'
 
-// Synthetic fixtures test the rule, not real-game detection accuracy. No user
-// screenshot pixels were available locally to train or validate this detector.
+// Synthetic fixtures test the rule, not real-game detection accuracy.
+// Real minimap video regressions are in tests/rune-recording.spec.ts.
 type RGB = [number, number, number]
 const pink: RGB = [214, 74, 219]
 const cyan: RGB = [42, 221, 231]
@@ -29,6 +29,24 @@ function diamond(target: PixelFrame, cx: number, cy: number, radius = 6, mode: '
 const options = { ...DEFAULT_RUNE_OPTIONS }
 
 describe('experimental minimap diamond recognition', () => {
+  it('finds a violet diamond through its black stroke and outer white border', () => {
+    const sample = frame()
+    for (let y = -10; y <= 10; y++) for (let x = -10; x <= 10; x++) {
+      const distance = Math.abs(x) + Math.abs(y)
+      if (distance <= 10) pixel(sample, 55 + x, 40 + y, distance <= 6 ? [214, 100, 250] : distance <= 8 ? [12, 10, 17] : [235, 235, 242])
+    }
+    const candidate = detectRune(sample, options).candidate
+    expect(candidate).not.toBeNull()
+    expect(candidate).toMatchObject({x:45,y:30,width:21,height:21})
+  })
+  it.each(['square', 'circle'])('rejects a violet %s even with a black stroke and white outer border', shape => {
+    const sample = frame()
+    for (let y = -10; y <= 10; y++) for (let x = -10; x <= 10; x++) {
+      const distance = shape === 'square' ? Math.max(Math.abs(x), Math.abs(y)) : Math.hypot(x,y)
+      if (distance <= 10) pixel(sample, 55 + x, 40 + y, distance <= 6 ? [214, 100, 250] : distance <= 8 ? [12, 10, 17] : [235, 235, 242])
+    }
+    expect(detectRune(sample, options).candidate).toBeNull()
+  })
   it('separates a white-outlined violet marker from nearby purple map scaffolding', () => {
     const sample = frame(140, 100)
     for (let y = -8; y <= 8; y++) for (let x = -8; x <= 8; x++) {
