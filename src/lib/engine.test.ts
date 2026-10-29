@@ -59,6 +59,12 @@ describe('experience number OCR inactivity', () => {
     expect(timerRuntime(expMonitor, null, 40000, expOptions(40000, { lastReadAt: null })).status).toBe('error')
     expect(timerRuntime(expMonitor, null, 40000, expOptions(40000, { lastReadAt: Number.NaN })).status).toBe('error')
   })
+  it('keeps established visual monitoring active during a change check without allowing expiry', () => {
+    expect(timerRuntime(expMonitor, null, 40000, expOptions(40000, { changePending: true }))).toMatchObject({ status: 'running', remainingSec: 30, lastEventAt: 1000 })
+    expect(timerRuntime(expMonitor, null, 40000, expOptions(35999, { changePending: true })).status).toBe('error')
+    // A rejected change resumes the old deadline; it must not reset inactivity.
+    expect(timerRuntime(expMonitor, null, 40000, expOptions(40000, { changePending: false })).status).toBe('expired')
+  })
   it('surfaces OCR engine errors and suppresses alerts after sharing ends', () => {
     expect(timerRuntime(expMonitor, 1000, 999999, expOptions(999999, { error: '숫자 읽기 실패' }))).toMatchObject({ status: 'error', detail: '숫자 읽기 실패' })
     expect(timerRuntime(expMonitor, 1000, 999999, { ...expOptions(999999, { error: '숫자 읽기 실패' }), hasSource: false }).status).toBe('waiting')

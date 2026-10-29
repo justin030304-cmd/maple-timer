@@ -18,6 +18,7 @@ export interface ExpObservation {
   error?: string | null
   loading?: boolean
   confirming?: boolean
+  changePending?: boolean
 }
 
 export interface TimerOptions {
@@ -70,6 +71,7 @@ export function timerRuntime(monitor: Monitor, lastEventAt: number | null, nowMs
     detail: '경험치 숫자 인식이 지연되었습니다. 화면 공유와 인식 영역을 확인해 주세요.',
   }
   if (exp.lastChangedAt === null || !Number.isFinite(exp.lastChangedAt)) return { ...base, status: 'waiting', detail: '경험치 숫자 인식 · 연속 확인 대기 중' }
+  if (exp.changePending) return { ...base, status: 'running', detail: '경험치 숫자 변화 확인 중 · 알림 보류' }
 
   const elapsed = Math.max(0, (nowMs - exp.lastChangedAt) / 1000)
   const remainingSec = Math.max(0, base.remainingSec - elapsed)

@@ -1281,3 +1281,36 @@ test('a single changed EXP digit resets visual inactivity before expiry without 
   await expect(experienceLog(page)).toHaveCount(1,{timeout:6000})
   await page.getByRole('button',{name:'공유 종료',exact:true}).click()
 })
+
+test('recorded EXP changes keep monitoring active while confirmations suppress premature alerts',async({page})=>{
+  test.setTimeout(30000)
+  await mockCapture(page)
+  await page.addInitScript(({key,settings})=>localStorage.setItem(key,JSON.stringify({version:1,settings})),{key:SETTINGS_KEY,settings:{...DEFAULT_SETTINGS,expDetectionMode:'visual',expIdleSec:5,monitors:DEFAULT_SETTINGS.monitors.map(m=>({...m,enabled:m.kind==='exp',roi:m.kind==='exp'?{x:128/1280,y:120/720,width:380/1280,height:30/720}:null}))}})
+  await page.goto('/')
+  await beginCapture(page)
+  await page.evaluate(async()=>{
+    const capture=window.__capture!,ctx=capture.canvas.getContext('2d')!,video=document.createElement('video')
+    const state=window as unknown as {expVideoEnded:boolean;expStatuses:string[]}
+    state.expVideoEnded=false;state.expStatuses=[]
+    video.src='/tests/fixtures/experience-flicker.webm';video.muted=true;await video.play()
+    video.onended=()=>{state.expVideoEnded=true}
+    const draw=()=>{ctx.drawImage(video,128,120);capture.track.requestFrame?.();if(!video.ended)requestAnimationFrame(draw)}
+    draw()
+  })
+  const exp=card(page,'경험치 변화')
+  await expect(exp.locator('.tiny-status')).toContainText('숫자 감시 중')
+  await page.evaluate(()=>{
+    const row=document.querySelector('.kind-exp')!
+    const observer=new MutationObserver(()=>{
+      const text=row.querySelector('.tiny-status')?.textContent??''
+      ;(window as unknown as {expStatuses:string[]}).expStatuses.push(text)
+    })
+    observer.observe(row,{subtree:true,childList:true,characterData:true})
+  })
+  await expect.poll(()=>page.evaluate(()=>(window as unknown as {expVideoEnded:boolean}).expVideoEnded),{timeout:12000}).toBe(true)
+  expect(await page.evaluate(()=>(window as unknown as {expStatuses:string[]}).expStatuses.filter(text=>!text.includes('숫자 감시 중')))).toEqual([])
+  await expect(experienceLog(page)).toHaveCount(0)
+  // The recording ends with a genuine frozen value: monitoring must still alert.
+  await expect(experienceLog(page)).toHaveCount(1,{timeout:7000})
+  await page.getByRole('button',{name:'공유 종료',exact:true}).click()
+})

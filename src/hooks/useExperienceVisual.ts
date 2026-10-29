@@ -34,13 +34,13 @@ export function useExperienceVisual(stream: MediaStream | null, videoRef: RefObj
           const changed = experienceGlyphsChanged(baseline, glyphs)
           if (changed && !pendingChange) {
             // A possible change suppresses expiry while the next frame checks it.
-            pendingChange = true; confirmed = false
+            pendingChange = true
           } else {
             if (changed) { baseline = glyphs; lastChangedAt = now }
             pendingChange = false; confirmed = true
           }
         }
-        setView({ sourcePreview, observation: { value: '숫자 모양 확인됨', valid: confirmed, confirming: !confirmed, lastChangedAt, lastReadAt: now } })
+        setView({ sourcePreview, observation: { value: '숫자 모양 확인됨', valid: confirmed, confirming: !confirmed, changePending: confirmed && pendingChange, lastChangedAt, lastReadAt: now } })
       } catch (error) {
         baseline = null; lastChangedAt = null; confirmed = false; pendingChange = false
         setView({ sourcePreview, observation: { value: null, valid: false, lastChangedAt: null, lastReadAt: null, error: error instanceof Error ? error.message : '경험치 숫자 모양을 확인하지 못했습니다.' } })
