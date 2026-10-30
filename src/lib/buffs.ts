@@ -3,7 +3,9 @@ import type { PixelFrame } from './analysis'
 export type BuffTarget = 'potion' | 'union-wealth'
 export const BUFF_NAMES: Record<BuffTarget,string> = {potion:'비약','union-wealth':'유니온의 부'}
 export interface BuffMatch { target: BuffTarget; x:number; y:number; size:number; score:number }
-const positiveTiles=(tile:number)=>tile===0?[0,6]:[1]
+// The small captured Union icon has different antialiasing from the original
+// reference. Keep both; classification still has to beat the lookalike tiles.
+const positiveTiles=(tile:number)=>tile===0?[0,6]:[1,7]
 const negativeTiles=(tile:number)=>tile===0?[2]:[3,4,5]
 const luma=(data:Uint8ClampedArray,index:number)=>(data[index]+data[index+1]*2+data[index+2])/4
 function neutralFrame(frame:PixelFrame,x:number,y:number,size:number,coarse=false):boolean{

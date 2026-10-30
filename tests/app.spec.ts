@@ -1314,3 +1314,42 @@ test('recorded EXP changes keep monitoring active while confirmations suppress p
   await expect(experienceLog(page)).toHaveCount(1,{timeout:7000})
   await page.getByRole('button',{name:'공유 종료',exact:true}).click()
 })
+
+test('recorded small Union stays identified through the clip and clears when the shared icon disappears',async({page})=>{
+  test.setTimeout(35000)
+  await mockCapture(page)
+  await page.addInitScript(({key,settings})=>localStorage.setItem(key,JSON.stringify({version:1,settings})),{key:SETTINGS_KEY,settings:{...DEFAULT_SETTINGS,monitors:DEFAULT_SETTINGS.monitors.map(m=>({...m,enabled:false}))}})
+  await page.goto('/')
+  await beginCapture(page)
+  await page.getByRole('button',{name:'비약·유니온의 부 등록',exact:true}).click()
+  await page.evaluate(async()=>{
+    const state=window as unknown as {unionVideoEnded:boolean;unionStatuses:string[]}
+    state.unionVideoEnded=false;state.unionStatuses=[]
+    const capture=window.__capture!,ctx=capture.canvas.getContext('2d')!,video=document.createElement('video')
+    capture.canvas.width=1376;capture.canvas.height=776
+    video.src='/tests/fixtures/buff-union-small.webm';video.muted=true;await video.play()
+    video.onended=()=>{state.unionVideoEnded=true}
+    const draw=()=>{ctx.fillStyle='#151e19';ctx.fillRect(0,0,1376,776);ctx.drawImage(video,688,0);capture.track.requestFrame?.();if(!video.ended)requestAnimationFrame(draw)}
+    draw()
+  })
+  const union=card(page,'유니온의 부')
+  await expect(union.getByText('아이콘 감지됨',{exact:true})).toBeVisible({timeout:10000})
+  await expect(union.getByText('분 단위 표시 확인 · 마지막 59초 대기',{exact:true})).toBeVisible()
+  await page.evaluate(()=>{
+    const row=[...document.querySelectorAll('.kind-buff')].find(row=>row.querySelector('.monitor-name')?.textContent==='유니온의 부')!
+    const observer=new MutationObserver(()=>{
+      ;(window as unknown as {unionStatuses:string[]}).unionStatuses.push(row.querySelector('.tiny-status')?.textContent??'')
+    })
+    observer.observe(row,{subtree:true,childList:true,characterData:true})
+  })
+  await expect.poll(()=>page.evaluate(()=>(window as unknown as {unionVideoEnded:boolean}).unionVideoEnded),{timeout:12000}).toBe(true)
+  expect(await page.evaluate(()=>(window as unknown as {unionStatuses:string[]}).unionStatuses.filter(text=>text!=='아이콘 감지됨'))).toEqual([])
+  await expect(page.locator('.activity-row').filter({hasText:'곧 종료됩니다.'})).toHaveCount(0)
+  await page.evaluate(()=>{
+    const capture=window.__capture!,ctx=capture.canvas.getContext('2d')!
+    ctx.fillStyle='#111';ctx.fillRect(0,0,capture.canvas.width,capture.canvas.height);capture.track.requestFrame?.()
+  })
+  await expect(union.getByText('아이콘 감지됨',{exact:true})).toHaveCount(0,{timeout:10000})
+  await expect(union.locator('.timer-digits')).toHaveText('--:--')
+  await page.getByRole('button',{name:'공유 종료',exact:true}).click()
+})
