@@ -1390,3 +1390,33 @@ test('recorded Union minute overlay remains identified and reads nine minutes wi
   await expect(union.locator('.timer-digits')).toHaveText(/^9:0\d$/)
   await page.getByRole('button',{name:'공유 종료',exact:true}).click()
 })
+
+test('an unreadable Union timer preserves a freshly verified icon through a full-search miss and clears on removal',async({page})=>{
+  test.setTimeout(30000)
+  await mockCapture(page)
+  await page.addInitScript(({key,settings})=>localStorage.setItem(key,JSON.stringify({version:1,settings})),{key:SETTINGS_KEY,settings:{...DEFAULT_SETTINGS,soundEnabled:false,monitors:[...DEFAULT_SETTINGS.monitors.map(m=>({...m,enabled:false})),{id:'union-unreadable',name:'유니온의 부',kind:'buff',buffTarget:'union-wealth',enabled:true,roi:{x:.5,y:0,width:.5,height:.5},durationSec:60,warnBeforeSec:10}]}})
+  await page.goto('/')
+  await beginCapture(page)
+  const draw=async(index:number)=>page.evaluate(async index=>{
+    const image=new Image();image.src='/tests/fixtures/buff-union-unreadable-time.png';await image.decode()
+    const capture=window.__capture!,ctx=capture.canvas.getContext('2d')!
+    if(capture.canvas.width!==1376){capture.canvas.width=1376;capture.canvas.height=776}
+    ctx.fillStyle='#151e19';ctx.fillRect(0,0,1376,776);ctx.drawImage(image,0,index*200,688,200,688,0,688,200);capture.track.requestFrame?.()
+  },index)
+  const union=card(page,'유니온의 부')
+  await draw(0)
+  await expect(union.getByText('아이콘 감지됨',{exact:true})).toBeVisible({timeout:10000})
+  await expect(union.locator('.timer-digits')).toHaveText('4:07')
+  await draw(1)
+  await expect(union.getByText('아이콘 확인 · 시간 판독 대기 · 알림 보류',{exact:true})).toBeVisible()
+  await expect(union.getByText('아이콘 감지됨',{exact:true})).toBeVisible()
+  await expect(union.locator('.timer-digits')).toHaveText('--:--')
+  await draw(2)
+  await expect(union.locator('.timer-digits')).toHaveText('4:03',{timeout:6000})
+  await expect(union.getByText('아이콘 감지됨',{exact:true})).toBeVisible()
+  await expect(page.locator('.activity-row').filter({hasText:'곧 종료됩니다.'})).toHaveCount(0)
+  await page.evaluate(()=>{const c=window.__capture!,ctx=c.canvas.getContext('2d')!;ctx.fillStyle='#111';ctx.fillRect(0,0,c.canvas.width,c.canvas.height);c.track.requestFrame?.()})
+  await expect(union.getByText('아이콘 감지됨',{exact:true})).toHaveCount(0,{timeout:6000})
+  await expect(union.locator('.timer-digits')).toHaveText('--:--')
+  await page.getByRole('button',{name:'공유 종료',exact:true}).click()
+})

@@ -61,7 +61,10 @@ export function useBuffDetection({stream,videoRef,monitors,onAlert}:{stream:Medi
           if(found){
             const result=recognizeBuffTime(image,found,BUFF_DIGIT_MODEL)
             if(result){time=result;number=result.seconds;detail=number>59?`아이콘 감지됨 · ${result.display} 남음 · 59초 이하에서 종료 추적`:'초 단위 감소 확인 중'}else if(hasWhiteMinuteLabel(image,found))detail='분 단위 표시 확인 · 마지막 59초 대기'
-            else {detail='아이콘 확인 · 시간 판독 대기 · 알림 보류';positions[monitor.id]=undefined}
+            // Keep the location while the icon itself passes this frame's
+            // identity check. Unreadable digits invalidate the clock, not the
+            // icon; a missing/replaced icon still forces a fresh search above.
+            else detail='아이콘 확인 · 시간 판독 대기 · 알림 보류'
           }
           if(!confirmed){number=null;time=null;if(found)detail='아이콘 후보 연속 확인 중 · 알림 보류'}
           const clock=advanceBuffClock(previous,number,now);clocks[monitor.id]=clock
