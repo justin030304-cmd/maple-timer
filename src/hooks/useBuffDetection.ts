@@ -68,7 +68,8 @@ export function useBuffDetection({stream,videoRef,monitors,onAlert}:{stream:Medi
           }
           if(!confirmed){number=null;time=null;if(found)detail='아이콘 후보 연속 확인 중 · 알림 보류'}
           const clock=advanceBuffClock(previous,number,now);clocks[monitor.id]=clock
-          if(clock.valid)detail='종료 시점 추적 중'
+          if(clock.error){detail=clock.error;number=null;time=null}
+          else if(clock.valid)detail='종료 시점 추적 중'
           next[monitor.id]={clock,detail,score:found?.score??null,number,time,candidate:confirmed?found??null:null}
         }catch(error){
           identities[monitor.id]={candidate:null,frames:0}
@@ -91,7 +92,7 @@ export function useBuffDetection({stream,videoRef,monitors,onAlert}:{stream:Medi
       try{
         for(const m of targets){
           const old=clocks[m.id]??emptyBuffClock()
-          clocks[m.id]=session.current.targets[m.id]===m.buffTarget?{...old,valid:false,pendingEnd:null,lastNumber:null,drops:0}:{...emptyBuffClock(),cycle:old.cycle}
+          clocks[m.id]=session.current.targets[m.id]===m.buffTarget?{...old,valid:false,pendingEnd:null,lastNumber:null,lastNumberAt:null,drops:0}:{...emptyBuffClock(),cycle:old.cycle}
           session.current.targets[m.id]=m.buffTarget!
         }
         setObservations(Object.fromEntries(targets.map(m=>[m.id,{clock:emptyBuffClock(),detail:'버프 인식 모델 준비 중',score:null,number:null,candidate:null,loading:true}])))

@@ -1454,3 +1454,32 @@ test('recorded sub-minute Union starts tracking and sends one custom forty-secon
   await page.getByRole('button',{name:'공유 종료',exact:true}).click()
   await expect(union.locator('.timer-digits')).toHaveText('--:--')
 })
+
+for(const captureScale of[1,2]){
+  test(`actual ten-second Union warning survives reading interruptions at capture scale ${captureScale}`,async({page})=>{
+    test.setTimeout(45000)
+    await mockCapture(page);await mockSpeech(page)
+    await page.addInitScript(({key,settings})=>localStorage.setItem(key,JSON.stringify({version:1,settings})),{key:SETTINGS_KEY,settings:{...DEFAULT_SETTINGS,monitors:[...DEFAULT_SETTINGS.monitors.map(m=>({...m,enabled:false})),{id:'union-ten-live',name:'유니온의 부',kind:'buff',buffTarget:'union-wealth',enabled:true,roi:{x:.5,y:0,width:.5,height:.5},durationSec:60,warnBeforeSec:10}]}})
+    await page.goto('/')
+    await beginCapture(page)
+    await page.evaluate(async scale=>{
+      const capture=window.__capture!,ctx=capture.canvas.getContext('2d')!,video=document.createElement('video')
+      capture.canvas.width=1376*scale;capture.canvas.height=776*scale
+      ;(window as unknown as {tenVideoEnded:boolean}).tenVideoEnded=false
+      video.src='/tests/fixtures/buff-union-ten-second.webm';video.muted=true;await video.play()
+      video.onended=()=>{(window as unknown as {tenVideoEnded:boolean}).tenVideoEnded=true}
+      const draw=()=>{ctx.fillStyle='#151e19';ctx.fillRect(0,0,capture.canvas.width,capture.canvas.height);ctx.drawImage(video,688*scale,0,688*scale,200*scale);capture.track.requestFrame?.();if(!video.ended)requestAnimationFrame(draw)}
+      draw()
+    },captureScale)
+    const union=card(page,'유니온의 부'),warning=page.locator('.activity-row').filter({hasText:'유니온의 부 곧 종료됩니다.'})
+    await expect(union.locator('.timer-digits')).toHaveText(/^\d{1,2}초$/,{timeout:13000})
+    await expect(warning).toHaveCount(0)
+    await expect(warning).toHaveCount(1,{timeout:17000})
+    await expect.poll(()=>page.evaluate(()=>window.__spoken!.filter(u=>u.text==='버프 끝나가요').length)).toBe(1)
+    await expect.poll(()=>page.evaluate(()=>(window as unknown as {tenVideoEnded:boolean}).tenVideoEnded),{timeout:12000}).toBe(true)
+    await expect(warning).toHaveCount(1)
+    expect(await page.evaluate(()=>window.__spoken!.filter(u=>u.text==='버프 끝나가요').length)).toBe(1)
+    await page.getByRole('button',{name:'공유 종료',exact:true}).click()
+    await expect(union.locator('.timer-digits')).toHaveText('--:--')
+  })
+}

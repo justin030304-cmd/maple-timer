@@ -29,6 +29,32 @@ describe('buff seconds tracking',()=>{
   s=advanceBuffClock(s,59,6000);s=advanceBuffClock(s,58,7000);s=advanceBuffClock(s,57,8000)
   expect(s.cycle).toBe(cycle+1)
  })
+ it('resumes a confirmed deadline after a brief unreadable frame without alerting during it',()=>{
+  let s=advanceBuffClock(emptyBuffClock(),12,0);s=advanceBuffClock(s,11,1000);s=advanceBuffClock(s,10,2000)
+  const cycle=s.cycle,end=s.expiresAt,sent=new Set<string>()
+  s=advanceBuffClock(s,null,2500)
+  expect(s.valid).toBe(false)
+  expect(clusterBuffAlerts(s.valid?[item('union',s.expiresAt!,s.cycle)]:[],2500,sent)).toHaveLength(0)
+  s=advanceBuffClock(s,9,3000)
+  expect(s.valid).toBe(true);expect(s.expiresAt).toBe(end);expect(s.cycle).toBe(cycle)
+  expect(clusterBuffAlerts([item('union',s.expiresAt!,s.cycle)],3000,sent)).toHaveLength(1)
+  s=advanceBuffClock(s,null,3500);s=advanceBuffClock(s,8,4000)
+  expect(clusterBuffAlerts([item('union',s.expiresAt!,s.cycle)],4000,sent)).toHaveLength(0)
+ })
+ it('does not keep recovery alive through repeated unreadable frames or accept a different countdown',()=>{
+  let s=advanceBuffClock(emptyBuffClock(),12,0);s=advanceBuffClock(s,11,1000);s=advanceBuffClock(s,10,2000)
+  const confirmed=s
+  expect(advanceBuffClock(confirmed,7,5500).valid).toBe(true)
+  for(let now=2500;now<=7000;now+=500)s=advanceBuffClock(s,null,now)
+  expect(s.valid).toBe(false);expect(s.drops).toBe(0)
+  expect(advanceBuffClock(s,5,7000).valid).toBe(false)
+  const gap=advanceBuffClock(confirmed,null,2500)
+  const outlier=advanceBuffClock(gap,2,3000)
+  expect(outlier.valid).toBe(false);expect(outlier.error).toContain('다시 확인')
+  expect(advanceBuffClock(outlier,9,3500).valid).toBe(true)
+  expect(advanceBuffClock(gap,59,3000).valid).toBe(false)
+  expect(advanceBuffClock(advanceBuffClock(gap,543,2700),9,3000).valid).toBe(false)
+ })
 })
 describe('buff expiry clustering',()=>{
  it('emits one group at 10 seconds before the earliest endpoint, once per cycle',()=>{
