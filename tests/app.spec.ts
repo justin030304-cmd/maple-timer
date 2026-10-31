@@ -1353,3 +1353,40 @@ test('recorded small Union stays identified through the clip and clears when the
   await expect(union.locator('.timer-digits')).toHaveText('--:--')
   await page.getByRole('button',{name:'공유 종료',exact:true}).click()
 })
+
+test('recorded Union minute overlay remains identified and reads nine minutes without an expiry alert',async({page})=>{
+  test.setTimeout(35000)
+  await mockCapture(page)
+  await page.addInitScript(({key,settings})=>localStorage.setItem(key,JSON.stringify({version:1,settings})),{key:SETTINGS_KEY,settings:{...DEFAULT_SETTINGS,monitors:DEFAULT_SETTINGS.monitors.map(m=>({...m,enabled:false}))}})
+  await page.goto('/')
+  await beginCapture(page)
+  await page.getByRole('button',{name:'비약·유니온의 부 등록',exact:true}).click()
+  await page.evaluate(async()=>{
+    const state=window as unknown as {unionOverlayEnded:boolean;unionOverlayStates:string[]}
+    state.unionOverlayEnded=false;state.unionOverlayStates=[]
+    const capture=window.__capture!,ctx=capture.canvas.getContext('2d')!,video=document.createElement('video')
+    capture.canvas.width=1376;capture.canvas.height=776
+    video.src='/tests/fixtures/buff-union-minute-overlay.webm';video.muted=true;await video.play()
+    video.onended=()=>{state.unionOverlayEnded=true}
+    const draw=()=>{ctx.fillStyle='#151e19';ctx.fillRect(0,0,1376,776);ctx.drawImage(video,688,0);capture.track.requestFrame?.();if(!video.ended)requestAnimationFrame(draw)}
+    draw()
+  })
+  const union=card(page,'유니온의 부')
+  await expect(union.getByText('아이콘 감지됨',{exact:true})).toBeVisible({timeout:12000})
+  await expect(union.locator('.timer-digits')).toHaveText(/^9:\d{2}$/)
+  await page.evaluate(()=>{
+    const row=[...document.querySelectorAll('.kind-buff')].find(row=>row.querySelector('.monitor-name')?.textContent==='유니온의 부')!
+    const observer=new MutationObserver(()=>{
+      const status=row.querySelector('.tiny-status')?.textContent??'',digits=row.querySelector('.timer-digits')?.textContent??''
+      // An unreadable transition may show --:--; it must never become seconds
+      // or clear a confirmed icon identity while the icon remains visible.
+      if(status!=='아이콘 감지됨'||digits!=='--:--'&&!/^9:\d{2}$/.test(digits))(window as unknown as {unionOverlayStates:string[]}).unionOverlayStates.push(`${status}:${digits}`)
+    })
+    observer.observe(row,{subtree:true,childList:true,characterData:true})
+  })
+  await expect.poll(()=>page.evaluate(()=>(window as unknown as {unionOverlayEnded:boolean}).unionOverlayEnded),{timeout:14000}).toBe(true)
+  expect(await page.evaluate(()=>(window as unknown as {unionOverlayStates:string[]}).unionOverlayStates)).toEqual([])
+  await expect(page.locator('.activity-row').filter({hasText:'곧 종료됩니다.'})).toHaveCount(0)
+  await expect(union.locator('.timer-digits')).toHaveText(/^9:0\d$/)
+  await page.getByRole('button',{name:'공유 종료',exact:true}).click()
+})

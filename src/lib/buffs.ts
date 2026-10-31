@@ -74,8 +74,12 @@ function appearanceProposal(frame:PixelFrame,templates:PixelFrame,tiles:number[]
 function identityScore(frame:PixelFrame,templates:PixelFrame,tile:number,x:number,y:number,size:number):number{
   if(!neutralFrame(frame,x,y,size)||!paletteMatches(frame,tile,x,y,size))return 0
   const match=structuralClass(frame,templates,positiveTiles(tile),x,y,size)
-  if(match.top<.5||match.bottom<(tile===0?.4:.55)||match.score<(tile===0?.6:.65))return 0
+  if(match.top<.5||match.bottom<(tile===0?.4:.35)||match.score<(tile===0?.6:.64))return 0
   const other=structuralClass(frame,templates,negativeTiles(tile),x,y,size)
+  // A small sub-ten-minute overlay changes the Union icon's lower pattern. Accept
+  // that partial match only with a much stronger cap and lookalike separation.
+  const clearUnionCap=tile===1&&size<=36&&match.top>=.8&&match.bottom>=.35&&match.score>=.64&&match.score-other.score>=.2
+  if(!clearUnionCap&&(match.top<.5||match.bottom<(tile===0?.4:.55)||match.score<(tile===0?.6:.65)))return 0
   if(match.score-other.score<(tile===0?.008:.05))return 0
   return match.score
 }
@@ -188,9 +192,9 @@ export function advanceBuffIdentity(previous:BuffIdentity,found:BuffMatch|null):
 export interface DigitModel {digit:string;aspect:number;mask:number[]}
 export interface BuffTimeReading {seconds:number;display:string;format:'seconds'|'minutes-seconds';score:number}
 /** Read explicit yellow mm:ss separately from unlabelled yellow seconds. White minute labels are excluded. */
-function readBuffTimeAtBox(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|'size'>,models:DigitModel[],yellowThreshold=95):BuffTimeReading|null{
+function readBuffTimeAtBox(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|'size'>,models:DigitModel[],yellowThreshold=95,evidence?:{colon:boolean},textBand=false):BuffTimeReading|null{
   const {size,x:originX,y:originY}=match,w=Math.round(size),h=w,mask=new Uint8Array(w*h),seen=new Uint8Array(w*h)
-  for(let y=Math.floor(h*.29);y<Math.floor(h*.83);y++)for(let x=Math.floor(w*.05);x<Math.floor(w*.95);x++){
+  for(let y=textBand?Math.round(h*.34):Math.floor(h*.29);y<(textBand?Math.round(h*.66):Math.floor(h*.83));y++)for(let x=Math.floor(w*.05);x<Math.floor(w*.95);x++){
     const i=((originY+y)*frame.width+originX+x)*4,r=frame.data[i],g=frame.data[i+1],b=frame.data[i+2]
     mask[y*w+x]=Number(r>yellowThreshold&&g>yellowThreshold&&Math.abs(r-g)<70&&Math.min(r,g)-b>12)
   }
@@ -204,7 +208,7 @@ function readBuffTimeAtBox(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|'size'>
     }
     const width=right-left+1,height=bottom-top+1
     if(height>=h*.17&&height<=h*.6&&width<w*.4&&queue.length>=Math.max(4,8*(w/44)**2)&&top>=h*.27&&bottom+1<=h*.81)boxes.push({x:left,y:top,width,height})
-    else if(height>=h*.03&&height<=h*.11&&width>=w*.025&&width<=w*.13&&queue.length>=3)dots.push({x:left,y:top,width,height})
+    else if(height>=h*.03&&height<=h*.11&&width>=w*.025&&width<=w*.13&&queue.length>=Math.max(1,Math.min(3,Math.round(3*(w/44)**2))))dots.push({x:left,y:top,width,height})
   }
   boxes.sort((a,b)=>a.x-b.x)
   const separators=dots.flatMap((a,i)=>dots.slice(i+1).flatMap(b=>{
@@ -212,6 +216,7 @@ function readBuffTimeAtBox(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|'size'>
     const gap=lower.y-upper.y
     return Math.abs((upper.x+upper.width/2)-(lower.x+lower.width/2))<=size*.04&&gap>=size*.07&&gap<=size*.2&&upper.y>=size*.33&&lower.y+lower.height<=size*.7 ? [(upper.x+lower.x+upper.width/2+lower.width/2)/2] : []
   }))
+  if(separators.length&&evidence)evidence.colon=true
   if(separators.length>1)return null
   const whiteMinutes=hasWhiteMinuteLabel(frame,match)
   if(whiteMinutes&&!separators.length)return null
@@ -248,23 +253,25 @@ function readBuffTimeAtBox(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|'size'>
   }
   return best
 }
-/** Border alignment can differ by a pixel after capture resizing. Retry only
- * an unreadable clock and require agreeing shifted reads before accepting it. */
+/** Border alignment can differ by a pixel after capture resizing. Retry
+ * unreadable clocks and ambiguous small seconds with agreeing shifted reads. */
 export function recognizeBuffTime(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|'size'>,models:DigitModel[]):BuffTimeReading|null{
-  const direct=readBuffTimeAtBox(frame,match,models)
-  if(direct)return direct
-  if(hasWhiteMinuteLabel(frame,match))return null
+  const evidence={colon:false}
+  const direct=readBuffTimeAtBox(frame,match,models,95,evidence)
+  if(direct&&(direct.format==='minutes-seconds'||match.size>36))return direct
+  if(hasWhiteMinuteLabel(frame,match)&&!evidence.colon)return null
   const votes=new Map<string,{reading:BuffTimeReading;count:number}>()
-  for(const threshold of [95,125,155])for(const dy of [0,-1,1,-2,2]){
-    if(threshold===95&&dy===0)continue
+  for(const textBand of match.size<=36?[false,true]:[false])for(const threshold of [95,125,155])for(const dy of [0,-1,1,-2,2]){
     const shifted={...match,y:match.y+dy}
     if(shifted.y<0||shifted.y+shifted.size>frame.height)continue
-    const reading=readBuffTimeAtBox(frame,shifted,models,threshold)
+    const reading=readBuffTimeAtBox(frame,shifted,models,threshold,evidence,textBand)
     if(!reading)continue
     const key=`${reading.format}:${reading.seconds}`,old=votes.get(key)
     votes.set(key,{reading:old&&old.reading.score>reading.score?old.reading:reading,count:(old?.count??0)+1})
   }
-  const agreed=[...votes.values()].filter(v=>v.count>=2).sort((a,b)=>b.count-a.count||b.reading.score-a.reading.score)
+  if(direct&&!evidence.colon)return direct
+  // A colon seen in any pass rules out partial glyphs such as "1 second".
+  const agreed=[...votes.values()].filter(v=>v.count>=2&&(!evidence.colon||v.reading.format==='minutes-seconds')).sort((a,b)=>b.count-a.count||b.reading.score-a.reading.score)
   return agreed.length===1||agreed.length>1&&agreed[0].count>agreed[1].count?agreed[0].reading:null
 }
 /** Compatibility entry point: a colon clock must never become an integer such as 920. */
