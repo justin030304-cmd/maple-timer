@@ -1391,7 +1391,7 @@ test('recorded Union minute overlay remains identified and reads nine minutes wi
   await page.getByRole('button',{name:'공유 종료',exact:true}).click()
 })
 
-test('an unreadable Union timer preserves a freshly verified icon through a full-search miss and clears on removal',async({page})=>{
+test('an unreadable Union timer preserves a freshly verified icon and recovers before clearing on removal',async({page})=>{
   test.setTimeout(30000)
   await mockCapture(page)
   await page.addInitScript(({key,settings})=>localStorage.setItem(key,JSON.stringify({version:1,settings})),{key:SETTINGS_KEY,settings:{...DEFAULT_SETTINGS,soundEnabled:false,monitors:[...DEFAULT_SETTINGS.monitors.map(m=>({...m,enabled:false})),{id:'union-unreadable',name:'유니온의 부',kind:'buff',buffTarget:'union-wealth',enabled:true,roi:{x:.5,y:0,width:.5,height:.5},durationSec:60,warnBeforeSec:10}]}})
@@ -1407,6 +1407,7 @@ test('an unreadable Union timer preserves a freshly verified icon through a full
   await draw(0)
   await expect(union.getByText('아이콘 감지됨',{exact:true})).toBeVisible({timeout:10000})
   await expect(union.locator('.timer-digits')).toHaveText('4:07')
+  // Controlled occlusion blanks only clock pixels, leaving the icon intact.
   await draw(1)
   await expect(union.getByText('아이콘 확인 · 시간 판독 대기 · 알림 보류',{exact:true})).toBeVisible()
   await expect(union.getByText('아이콘 감지됨',{exact:true})).toBeVisible()
@@ -1419,4 +1420,37 @@ test('an unreadable Union timer preserves a freshly verified icon through a full
   await expect(union.getByText('아이콘 감지됨',{exact:true})).toHaveCount(0,{timeout:6000})
   await expect(union.locator('.timer-digits')).toHaveText('--:--')
   await page.getByRole('button',{name:'공유 종료',exact:true}).click()
+})
+
+test('recorded sub-minute Union starts tracking and sends one custom forty-second TTS warning',async({page})=>{
+  test.setTimeout(35000)
+  await mockCapture(page);await mockSpeech(page)
+  await page.addInitScript(({key,settings})=>localStorage.setItem(key,JSON.stringify({version:1,settings})),{key:SETTINGS_KEY,settings:{...DEFAULT_SETTINGS,monitors:[...DEFAULT_SETTINGS.monitors.map(m=>({...m,enabled:false})),{id:'union-seconds-live',name:'유니온의 부',kind:'buff',buffTarget:'union-wealth',enabled:true,roi:{x:.5,y:0,width:.5,height:.5},durationSec:60,warnBeforeSec:40}]}})
+  await page.goto('/')
+  await beginCapture(page)
+  await page.evaluate(async()=>{
+    const state=window as unknown as {unionSecondsEnded:boolean;unionSecondsLost:string[]}
+    state.unionSecondsEnded=false;state.unionSecondsLost=[]
+    const capture=window.__capture!,ctx=capture.canvas.getContext('2d')!,video=document.createElement('video')
+    capture.canvas.width=1376;capture.canvas.height=776
+    video.src='/tests/fixtures/buff-union-seconds.webm';video.muted=true;await video.play()
+    video.onended=()=>{state.unionSecondsEnded=true}
+    const draw=()=>{ctx.fillStyle='#151e19';ctx.fillRect(0,0,1376,776);ctx.drawImage(video,688,0);capture.track.requestFrame?.();if(!video.ended)requestAnimationFrame(draw)}
+    draw()
+  })
+  const union=card(page,'유니온의 부'),warning=page.locator('.activity-row').filter({hasText:'유니온의 부 곧 종료됩니다.'})
+  await expect(union.getByText('아이콘 감지됨',{exact:true})).toBeVisible({timeout:10000})
+  await page.evaluate(()=>{
+    const row=document.querySelector('.kind-buff')!
+    const observer=new MutationObserver(()=>{const status=row.querySelector('.tiny-status')?.textContent??'';if(['대기 중','인식 실패'].includes(status))(window as unknown as {unionSecondsLost:string[]}).unionSecondsLost.push(status)})
+    observer.observe(row,{subtree:true,childList:true,characterData:true})
+  })
+  await expect(union.locator('.timer-digits')).toHaveText(/^00:/,{timeout:7000})
+  await expect(warning).toHaveCount(1,{timeout:12000})
+  await expect.poll(()=>page.evaluate(()=>window.__spoken!.filter(u=>u.text==='버프 끝나가요').length)).toBe(1)
+  await expect.poll(()=>page.evaluate(()=>(window as unknown as {unionSecondsEnded:boolean}).unionSecondsEnded),{timeout:12000}).toBe(true)
+  expect(await page.evaluate(()=>(window as unknown as {unionSecondsLost:string[]}).unionSecondsLost)).toEqual([])
+  await expect(warning).toHaveCount(1)
+  await page.getByRole('button',{name:'공유 종료',exact:true}).click()
+  await expect(union.locator('.timer-digits')).toHaveText('--:--')
 })

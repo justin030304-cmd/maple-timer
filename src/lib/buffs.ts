@@ -1,11 +1,12 @@
 import { BUFF_OVERLAY_DIGITS } from './buffOverlayDigitModel'
+import { BUFF_SMALL_DIGITS } from './buffSmallDigitModel'
 import type { PixelFrame } from './analysis'
 export type BuffTarget = 'potion' | 'union-wealth'
 export const BUFF_NAMES: Record<BuffTarget,string> = {potion:'비약','union-wealth':'유니온의 부'}
 export interface BuffMatch { target: BuffTarget; x:number; y:number; size:number; score:number }
 // The small captured Union icon has different antialiasing from the original
-// reference. Keep both; classification still has to beat the lookalike tiles.
-const positiveTiles=(tile:number)=>tile===0?[0,6]:[1,7]
+// reference. Keep captured variants; classification must still beat lookalikes.
+const positiveTiles=(tile:number,size:number)=>tile===0?[0,6]:size<=36?[1,7,8]:[1,7]
 const negativeTiles=(tile:number)=>tile===0?[2]:[3,4,5]
 const luma=(data:Uint8ClampedArray,index:number)=>(data[index]+data[index+1]*2+data[index+2])/4
 function neutralFrame(frame:PixelFrame,x:number,y:number,size:number,coarse=false):boolean{
@@ -60,6 +61,7 @@ function structuralClass(frame:PixelFrame,templates:PixelFrame,tiles:number[],x:
 function appearanceProposal(frame:PixelFrame,templates:PixelFrame,tiles:number[],x:number,y:number,size:number):number{
   let best=0
   for(const tile of tiles){
+    if((tile+1)*32>templates.width)continue
     let error=0,n=0
     for(const py of [4,10,20,27])for(const px of [4,10,16,22,27]){
       const i=((y+Math.floor((py+.5)*size/32))*frame.width+x+Math.floor((px+.5)*size/32))*4,j=(py*templates.width+tile*32+px)*4
@@ -73,7 +75,11 @@ function appearanceProposal(frame:PixelFrame,templates:PixelFrame,tiles:number[]
  * bottle contents or Roman numeral, with brightness-normalized local contrast. */
 function identityScore(frame:PixelFrame,templates:PixelFrame,tile:number,x:number,y:number,size:number):number{
   if(!neutralFrame(frame,x,y,size)||!paletteMatches(frame,tile,x,y,size))return 0
-  const match=structuralClass(frame,templates,positiveTiles(tile),x,y,size)
+  let match=structuralClass(frame,templates,tile===0?[0,6]:[1,7],x,y,size)
+  if(tile===1&&size<=36){
+    const shaded=structuralClass(frame,templates,[8],x,y,size)
+    if(shaded.top>=.8&&shaded.bottom>=.75&&shaded.score>=.85&&shaded.score>match.score)match=shaded
+  }
   if(match.top<.5||match.bottom<(tile===0?.4:.35)||match.score<(tile===0?.6:.64))return 0
   const other=structuralClass(frame,templates,negativeTiles(tile),x,y,size)
   // A small sub-ten-minute overlay changes the Union icon's lower pattern. Accept
@@ -83,25 +89,39 @@ function identityScore(frame:PixelFrame,templates:PixelFrame,tile:number,x:numbe
   if(match.score-other.score<(tile===0?.008:.05))return 0
   return match.score
 }
+/** Keep adjacent peaks from consuming the entire small-icon search budget. */
+function spreadProposals(items:{x:number;y:number;score:number}[],step:number){
+  const selected:typeof items=[]
+  items.sort((a,b)=>b.score-a.score)
+  for(const item of items){
+    if(selected.some(other=>Math.abs(item.x-other.x)<=step&&Math.abs(item.y-other.y)<=step))continue
+    selected.push(item)
+    if(selected.length===40)break
+  }
+  return selected
+}
 /** Search scale includes 60px icons produced by the 960px analysis resize. */
 export function matchBuffs(frame:PixelFrame,templates:PixelFrame):BuffMatch[]{
   const result:BuffMatch[]=[]
   for(let tile=0;tile<2;tile++){
-    const positives=positiveTiles(tile)
     let best:BuffMatch|null=null
     for(const size of [20,24,28,30,32,34,36,40,44,48,52,56,60,64]){
       if(size>frame.width||size>frame.height)continue
+      const positives=positiveTiles(tile,size)
       const step=Math.max(2,Math.round(size/(size>=48?16:8))),proposals:{x:number;y:number;score:number}[]=[],colorProposals:{x:number;y:number;score:number}[]=[]
       for(let y=0;y<=frame.height-size;y+=step)for(let x=0;x<=frame.width-size;x+=step){
         if(!neutralFrame(frame,x,y,size,true)||!paletteMatches(frame,tile,x,y,size,true))continue
         const ranks=[(structuralClass(frame,templates,positives,x,y,size,3).score+1)/2,appearanceProposal(frame,templates,positives,x,y,size)]
         for(const [index,list] of [proposals,colorProposals].entries()){
           const value=ranks[index]
-          if(value>=.45&&(list.length<20||value>list[list.length-1].score)){list.push({x,y,score:value});list.sort((a,b)=>b.score-a.score);if(list.length>20)list.pop()}
+          if(value>=.45)list.push({x,y,score:value})
         }
       }
       const checked=new Set<number>()
-      for(const candidate of [...proposals,...colorProposals])for(let dy=-step;dy<=step;dy++)for(let dx=-step;dx<=step;dx++){
+      const crowded=tile===1&&size<=36
+      const choose=(items:typeof proposals)=>crowded?spreadProposals(items,step):items.sort((a,b)=>b.score-a.score).slice(0,20)
+      const radius=crowded?step*2:step
+      for(const candidate of [...choose(proposals),...choose(colorProposals)])for(let dy=-radius;dy<=radius;dy++)for(let dx=-radius;dx<=radius;dx++){
         const x=candidate.x+dx,y=candidate.y+dy
         if(x<0||y<0||x+size>frame.width||y+size>frame.height)continue
         const key=y*frame.width+x
@@ -191,9 +211,11 @@ export function advanceBuffIdentity(previous:BuffIdentity,found:BuffMatch|null):
 
 export interface DigitModel {digit:string;aspect:number;mask:number[]}
 export interface BuffTimeReading {seconds:number;display:string;format:'seconds'|'minutes-seconds';score:number}
+type BuffTimeRegion=Pick<BuffMatch,'x'|'y'|'size'>&{target?:BuffTarget}
 /** Read explicit yellow mm:ss separately from unlabelled yellow seconds. White minute labels are excluded. */
-function readBuffTimeAtBox(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|'size'>,models:DigitModel[],yellowThreshold=95,evidence?:{colon:boolean},textBand=false):BuffTimeReading|null{
+function readBuffTimeAtBox(frame:PixelFrame,match:BuffTimeRegion,models:DigitModel[],yellowThreshold=95,evidence?:{colon:boolean;rawColon?:boolean},textBand=false):BuffTimeReading|null{
   const {size,x:originX,y:originY}=match,w=Math.round(size),h=w,mask=new Uint8Array(w*h),seen=new Uint8Array(w*h)
+  const smallUnion=size<=36&&match.target==='union-wealth'
   for(let y=textBand?Math.round(h*.34):Math.floor(h*.29);y<(textBand?Math.round(h*.66):Math.floor(h*.83));y++)for(let x=Math.floor(w*.05);x<Math.floor(w*.95);x++){
     const i=((originY+y)*frame.width+originX+x)*4,r=frame.data[i],g=frame.data[i+1],b=frame.data[i+2]
     mask[y*w+x]=Number(r>yellowThreshold&&g>yellowThreshold&&Math.abs(r-g)<70&&Math.min(r,g)-b>12)
@@ -211,21 +233,33 @@ function readBuffTimeAtBox(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|'size'>
     else if(height>=h*.03&&height<=h*.11&&width>=w*.025&&width<=w*.13&&queue.length>=Math.max(1,Math.min(3,Math.round(3*(w/44)**2))))dots.push({x:left,y:top,width,height})
   }
   boxes.sort((a,b)=>a.x-b.x)
+  const textBoxes=boxes.filter(b=>b.width>=size*.07&&b.height>=size*.2&&b.y+b.height<=size*.74)
   const separators=dots.flatMap((a,i)=>dots.slice(i+1).flatMap(b=>{
     const upper=a.y<b.y?a:b,lower=a.y<b.y?b:a
     const gap=lower.y-upper.y
-    return Math.abs((upper.x+upper.width/2)-(lower.x+lower.width/2))<=size*.04&&gap>=size*.07&&gap<=size*.2&&upper.y>=size*.33&&lower.y+lower.height<=size*.7 ? [(upper.x+lower.x+upper.width/2+lower.width/2)/2] : []
+    const x=(upper.x+lower.x+upper.width/2+lower.width/2)/2,y=(upper.y+lower.y+upper.height/2+lower.height/2)/2
+    const row=textBoxes.filter(box=>Math.abs(box.y+box.height/2-y)<=size*.13)
+    const clockLayout=row.some(box=>box.x+box.width<x)&&row.filter(box=>box.x>x).length>=2
+    const pair=Math.abs((upper.x+upper.width/2)-(lower.x+lower.width/2))<=size*.04&&gap>=size*.07&&gap<=size*.2&&upper.y>=size*.33&&lower.y+lower.height<=size*.7
+    if(pair&&(!smallUnion||clockLayout)&&evidence)evidence.colon=true
+    return pair?[x]:[]
   }))
-  if(separators.length&&evidence)evidence.colon=true
+  if(separators.length&&evidence)evidence.rawColon=true
   if(separators.length>1)return null
   const whiteMinutes=hasWhiteMinuteLabel(frame,match)
   if(whiteMinutes&&!separators.length)return null
   // Each font has its own text band. A wider band for the large overlay must
   // not introduce gold icon artwork into the legacy seconds-only reading.
   let best:BuffTimeReading|null=null
-  for(const [index,family] of [models,BUFF_OVERLAY_DIGITS].entries()){
+  for(const [index,family] of (smallUnion?[models,BUFF_OVERLAY_DIGITS,BUFF_SMALL_DIGITS]:[models,BUFF_OVERLAY_DIGITS]).entries()){
     const glyphs=boxes.filter(box=>index===0 ? box.y>=h*.32 : box.y>=h*.27&&box.y+box.height>=h*.59&&box.y+box.height<=h*.74)
     if(!glyphs.length||glyphs.length>4||Math.max(...glyphs.map(b=>b.y))-Math.min(...glyphs.map(b=>b.y))>size*.13)continue
+    // A filtered-out digit on the same line must not turn 45 into 4.
+    if(smallUnion&&!separators.length){
+      const centre=glyphs.reduce((sum,b)=>sum+b.y+b.height/2,0)/glyphs.length
+      const row=textBoxes.filter(b=>Math.abs(b.y+b.height/2-centre)<=size*.13)
+      if(row.some(box=>!glyphs.includes(box)))continue
+    }
     let text='',quality=1
     for(const box of glyphs){
       const normalized=new Uint8Array(160)
@@ -255,13 +289,13 @@ function readBuffTimeAtBox(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|'size'>
 }
 /** Border alignment can differ by a pixel after capture resizing. Retry
  * unreadable clocks and ambiguous small seconds with agreeing shifted reads. */
-export function recognizeBuffTime(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|'size'>,models:DigitModel[]):BuffTimeReading|null{
-  const evidence={colon:false}
+export function recognizeBuffTime(frame:PixelFrame,match:BuffTimeRegion,models:DigitModel[]):BuffTimeReading|null{
+  const evidence:{colon:boolean;rawColon?:boolean}={colon:false}
   const direct=readBuffTimeAtBox(frame,match,models,95,evidence)
   if(direct&&(direct.format==='minutes-seconds'||match.size>36))return direct
-  if(hasWhiteMinuteLabel(frame,match)&&!evidence.colon)return null
+  if(hasWhiteMinuteLabel(frame,match)&&!evidence.rawColon)return null
   const votes=new Map<string,{reading:BuffTimeReading;count:number}>()
-  for(const textBand of match.size<=36?[false,true]:[false])for(const threshold of [95,125,155])for(const dy of [0,-1,1,-2,2]){
+  for(const textBand of match.size<=36?[false,true]:[false])for(const threshold of match.size<=36&&match.target==='union-wealth'?[95,105,115,125,155]:[95,125,155])for(const dy of [0,-1,1,-2,2]){
     const shifted={...match,y:match.y+dy}
     if(shifted.y<0||shifted.y+shifted.size>frame.height)continue
     const reading=readBuffTimeAtBox(frame,shifted,models,threshold,evidence,textBand)
@@ -269,13 +303,14 @@ export function recognizeBuffTime(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|
     const key=`${reading.format}:${reading.seconds}`,old=votes.get(key)
     votes.set(key,{reading:old&&old.reading.score>reading.score?old.reading:reading,count:(old?.count??0)+1})
   }
-  if(direct&&!evidence.colon)return direct
-  // A colon seen in any pass rules out partial glyphs such as "1 second".
-  const agreed=[...votes.values()].filter(v=>v.count>=2&&(!evidence.colon||v.reading.format==='minutes-seconds')).sort((a,b)=>b.count-a.count||b.reading.score-a.reading.score)
+  const clockEvidence=evidence.colon||[...votes.values()].some(v=>v.reading.format==='minutes-seconds')
+  if(direct&&!clockEvidence)return direct
+  // Full-clock evidence rules out partial glyphs such as "1 second".
+  const agreed=[...votes.values()].filter(v=>v.count>=2&&(!clockEvidence||v.reading.format==='minutes-seconds')).sort((a,b)=>b.count-a.count||b.reading.score-a.reading.score)
   return agreed.length===1||agreed.length>1&&agreed[0].count>agreed[1].count?agreed[0].reading:null
 }
 /** Compatibility entry point: a colon clock must never become an integer such as 920. */
-export function recognizeBuffDigits(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|'size'>,models:DigitModel[]):{number:number;score:number}|null{
+export function recognizeBuffDigits(frame:PixelFrame,match:BuffTimeRegion,models:DigitModel[]):{number:number;score:number}|null{
   const time=recognizeBuffTime(frame,match,models)
   return time?.format==='seconds'?{number:time.seconds,score:time.score}:null
 }

@@ -75,6 +75,10 @@ export function useBuffDetection({stream,videoRef,monitors,onAlert}:{stream:Medi
           clocks[monitor.id]=advanceBuffClock(previous,null,now)
           next[monitor.id]={clock:clocks[monitor.id],detail:'분석 실패 · 알림 보류',score:null,number:null,candidate:null,error:error instanceof Error?error.message:'버프 인식 실패'}
         }
+        // A confirmed region should not wait for another region's full search
+        // before its fresh observation reaches the UI.
+        if(disposed)return
+        setObservations(current=>({...current,[monitor.id]:next[monitor.id]}))
       }
       if(disposed)return
       setObservations(next)
