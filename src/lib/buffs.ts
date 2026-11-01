@@ -1,5 +1,6 @@
 import { BUFF_OVERLAY_DIGITS } from './buffOverlayDigitModel'
 import { BUFF_SMALL_DIGITS } from './buffSmallDigitModel'
+import { BUFF_POTION_DIGITS } from './buffPotionDigitModel'
 import type { PixelFrame } from './analysis'
 export type BuffTarget = 'potion' | 'union-wealth'
 export const BUFF_NAMES: Record<BuffTarget,string> = {potion:'비약','union-wealth':'유니온의 부'}
@@ -89,7 +90,7 @@ function identityScore(frame:PixelFrame,templates:PixelFrame,tile:number,x:numbe
   if(match.score-other.score<(tile===0?.008:.05))return 0
   return match.score
 }
-/** Keep adjacent peaks from consuming the entire Union search budget. */
+/** Keep adjacent peaks from consuming the crowded buff search budget. */
 function spreadProposals(items:{x:number;y:number;score:number}[],step:number){
   const selected:typeof items=[]
   items.sort((a,b)=>b.score-a.score)
@@ -101,12 +102,22 @@ function spreadProposals(items:{x:number;y:number;score:number}[],step:number){
   return selected
 }
 /** Search scale includes 60px icons produced by the 960px analysis resize. */
-export function matchBuffs(frame:PixelFrame,templates:PixelFrame):BuffMatch[]{
+export function matchBuffs(frame:PixelFrame,templates:PixelFrame,targets:BuffTarget[]=['potion','union-wealth']):BuffMatch[]{
   const result:BuffMatch[]=[]
   for(let tile=0;tile<2;tile++){
+    if(!targets.includes(tile===0?'potion':'union-wealth'))continue
     let best:BuffMatch|null=null
     for(const size of [20,24,28,30,32,34,36,38,40,42,44,45,46,48,52,56,60,64]){
       if(size>frame.width||size>frame.height)continue
+      // At native 32px, a countdown can push the potion out of every coarse
+      // shortlist. Check this one scale densely; final identity gates stay equal.
+      if(tile===0&&size===32){
+        for(let y=0;y<=frame.height-size;y++)for(let x=0;x<=frame.width-size;x++){
+          const score=identityScore(frame,templates,tile,x,y,size)
+          if(score>0&&(!best||score>best.score))best={target:'potion',x,y,size,score}
+        }
+        continue
+      }
       const positives=positiveTiles(tile)
       const step=Math.max(2,Math.round(size/(size>=48?16:8))),proposals:{x:number;y:number;score:number}[]=[],colorProposals:{x:number;y:number;score:number}[]=[]
       for(let y=0;y<=frame.height-size;y+=step)for(let x=0;x<=frame.width-size;x+=step){
@@ -189,6 +200,18 @@ export function verifyBuffEdges(frame:PixelFrame,templates:PixelFrame,match:Buff
   return identityScore(frame,templates,tile,match.x,match.y,match.size)>0
 }
 
+/** Recheck nearby slots after a row reorder before running a full-frame search.
+ * Every candidate must pass the same current-frame identity gates. */
+export function relocateBuff(frame:PixelFrame,templates:PixelFrame,previous:BuffMatch):BuffMatch|null{
+  const {x:ox,y:oy,size,target}=previous,tile=target==='potion'?0:1
+  let best:BuffMatch|null=null
+  for(let y=Math.max(0,oy-size*2);y<=Math.min(frame.height-size,oy+size*2);y++)for(let x=Math.max(0,ox-size);x<=Math.min(frame.width-size,ox+size);x++){
+    const score=identityScore(frame,templates,tile,x,y,size)
+    if(score>0&&(!best||score>best.score))best={target,x,y,size,score}
+  }
+  return best
+}
+
 /** White lower-left minute labels rule out an ending-soon yellow seconds clock. */
 export function hasWhiteMinuteLabel(frame:PixelFrame,match:Pick<BuffMatch,'x'|'y'|'size'>):boolean{
   const {x:ox,y:oy,size}=match,reach=Math.max(1,Math.round(size/32))
@@ -259,11 +282,11 @@ function readBuffTimeAtBox(frame:PixelFrame,match:BuffTimeRegion,models:DigitMod
   // Each font has its own text band. A wider band for the large overlay must
   // not introduce gold icon artwork into the legacy seconds-only reading.
   let best:BuffTimeReading|null=null
-  for(const [index,family] of (unionTimer?[models,BUFF_OVERLAY_DIGITS,BUFF_SMALL_DIGITS]:[models,BUFF_OVERLAY_DIGITS]).entries()){
+  for(const [index,family] of (unionTimer?[models,BUFF_OVERLAY_DIGITS,BUFF_SMALL_DIGITS]:match.target==='potion'?[models,BUFF_OVERLAY_DIGITS,BUFF_POTION_DIGITS]:[models,BUFF_OVERLAY_DIGITS]).entries()){
     const glyphs=boxes.filter(box=>index===0 ? box.y>=h*.32 : box.y>=h*.27&&box.y+box.height>=h*.59&&box.y+box.height<=h*.74)
     if(!glyphs.length||glyphs.length>4||Math.max(...glyphs.map(b=>b.y))-Math.min(...glyphs.map(b=>b.y))>size*.13)continue
     // A filtered-out digit on the same line must not turn 45 into 4.
-    if(unionTimer&&!separators.length){
+    if(match.target&&!separators.length){
       const centre=glyphs.reduce((sum,b)=>sum+b.y+b.height/2,0)/glyphs.length
       const row=textBoxes.filter(b=>Math.abs(b.y+b.height/2-centre)<=size*.13)
       if(row.some(box=>!glyphs.includes(box)))continue
@@ -300,10 +323,10 @@ function readBuffTimeAtBox(frame:PixelFrame,match:BuffTimeRegion,models:DigitMod
 export function recognizeBuffTime(frame:PixelFrame,match:BuffTimeRegion,models:DigitModel[]):BuffTimeReading|null{
   const evidence:{colon:boolean;rawColon?:boolean}={colon:false}
   const direct=readBuffTimeAtBox(frame,match,models,95,evidence)
-  if(direct&&(direct.format==='minutes-seconds'||match.size>36&&match.target!=='union-wealth'))return direct
+  if(direct&&(direct.format==='minutes-seconds'||match.size>36&&!match.target))return direct
   if(hasWhiteMinuteLabel(frame,match)&&!evidence.rawColon)return null
   const votes=new Map<string,{reading:BuffTimeReading;count:number}>()
-  for(const textBand of match.size<=36||match.target==='union-wealth'?[false,true]:[false])for(const threshold of match.target==='union-wealth'?[95,105,115,125,155]:[95,125,155])for(const dy of [0,-1,1,-2,2]){
+  for(const textBand of match.size<=36||match.target?[false,true]:[false])for(const threshold of match.target?[95,105,115,125,155]:[95,125,155])for(const dy of [0,-1,1,-2,2]){
     const shifted={...match,y:match.y+dy}
     if(shifted.y<0||shifted.y+shifted.size>frame.height)continue
     const reading=readBuffTimeAtBox(frame,shifted,models,threshold,evidence,textBand)
@@ -312,11 +335,15 @@ export function recognizeBuffTime(frame:PixelFrame,match:BuffTimeRegion,models:D
     votes.set(key,{reading:old&&old.reading.score>reading.score?old.reading:reading,count:(old?.count??0)+1})
   }
   const clockEvidence=evidence.colon||[...votes.values()].some(v=>v.reading.format==='minutes-seconds')
-  if(direct&&!clockEvidence&&match.target!=='union-wealth')return direct
-  // Union seconds require agreement too: one threshold can confuse 7 with 2.
+  if(direct&&!clockEvidence&&!match.target)return direct
+  // Captured seconds require agreement too: one threshold can confuse 7 with 2.
   // Full-clock evidence rules out partial glyphs such as "1 second".
   const agreed=[...votes.values()].filter(v=>v.count>=2&&(!clockEvidence||v.reading.format==='minutes-seconds')).sort((a,b)=>b.count-a.count||b.reading.score-a.reading.score)
-  return agreed.length===1||agreed.length>1&&agreed[0].count>agreed[1].count?agreed[0].reading:null
+  const selected=agreed.length===1||agreed.length>1&&agreed[0].count>agreed[1].count?agreed[0].reading:null
+  // Repeated shifts of one weak potion glyph must not outvote a stronger,
+  // conflicting shape. Hold this frame and wait for the next real observation.
+  if(match.target==='potion'&&selected?.format==='seconds'&&[...votes.values()].some(v=>v.reading.seconds!==selected.seconds&&v.reading.score>selected.score))return null
+  return selected
 }
 /** Compatibility entry point: a colon clock must never become an integer such as 920. */
 export function recognizeBuffDigits(frame:PixelFrame,match:BuffTimeRegion,models:DigitModel[]):{number:number;score:number}|null{

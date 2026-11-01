@@ -1,7 +1,8 @@
 import {test,expect} from '@playwright/test'
 
 test('small recorded Union icons remain classified and cached checks reject a replaced icon',async({page})=>{
-  test.setTimeout(60000)
+  // Nineteen independent cold searches; live tracking reuses verified slots.
+  test.setTimeout(90000)
   await page.goto('/')
   const result=await page.evaluate(async()=>{
     const {matchBuffs,verifyBuffEdges,recognizeBuffTime,hasWhiteMinuteLabel}=await import('/src/lib/'+'buffs.ts') as typeof import('../src/lib/buffs')
@@ -12,7 +13,7 @@ test('small recorded Union icons remain classified and cached checks reject a re
     const frames=[];let first:ReturnType<typeof matchBuffs>[number]|undefined
     for(let n=0;n<19;n++){
       canvas.width=688;canvas.height=200;ctx.drawImage(strip,0,n*200,688,200,0,0,688,200)
-      const frame=ctx.getImageData(0,0,688,200),union=matchBuffs(frame,templates).find(m=>m.target==='union-wealth')
+      const frame=ctx.getImageData(0,0,688,200),union=matchBuffs(frame,templates,['union-wealth']).find(m=>m.target==='union-wealth')
       first??=union
       frames.push({union,verified:!!first&&verifyBuffEdges(frame,templates,first),minute:!!union&&hasWhiteMinuteLabel(frame,union),time:union?recognizeBuffTime(frame,union,BUFF_DIGIT_MODEL):null})
     }
